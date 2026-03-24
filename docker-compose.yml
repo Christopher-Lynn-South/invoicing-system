@@ -20,7 +20,10 @@ services:
 
   # ─── Node.js app ─────────────────────────────────────────────────────────────
   app:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY}
     restart: unless-stopped
     depends_on:
       postgres:

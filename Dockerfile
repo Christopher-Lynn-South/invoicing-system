@@ -7,6 +7,10 @@ WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Inject Stripe publishable key at build time (safe — it's a public key)
+ARG VITE_STRIPE_PUBLISHABLE_KEY
+ENV VITE_STRIPE_PUBLISHABLE_KEY=$VITE_STRIPE_PUBLISHABLE_KEY
+
 # Copy client source and build
 COPY client/ ./client/
 RUN npm run client:build
