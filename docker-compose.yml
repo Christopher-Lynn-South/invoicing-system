@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+
+  # ─── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: orderflow
+      POSTGRES_USER: orderflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orderflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Node.js app ─────────────────────────────────────────────────────────────
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Override DB_URL to point at the postgres container
+      DB_URL: postgresql://orderflow:${POSTGRES_PASSWORD}@postgres:5432/orderflow
+      NODE_ENV: production
+    volumes:
+      - rx_storage:/var/orderflow/prescriptions
+      - uploads:/app/uploads
+    ports:
+      - "3001:3001"
+
+  # ─── Nginx (SSL termination) ──────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/orderflow.conf:ro
+      # Let's Encrypt certs — managed on the host by certbot
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    command: >
+      sh -c "nginx -g 'daemon off;'"
+
+volumes:
+  postgres_data:
+  rx_storage:
+  uploads:
