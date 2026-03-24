@@ -26,8 +26,7 @@ const PORT = process.env.PORT || 3001;
 app.set('trust proxy', 1);
 
 // ─── Stripe webhook needs raw body BEFORE json parser ────────────────────────
-const paymentsRouter = require('./routes/payments');
-app.use('/api/webhooks/stripe', paymentsRouter);
+app.use('/api/webhooks/stripe', require('./routes/stripe-webhook'));
 
 // ─── Body parsers ─────────────────────────────────────────────────────────────
 app.use(express.json());
