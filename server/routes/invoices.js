@@ -101,7 +101,7 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
 });
 
 // GET /api/invoices  (list all invoices — admin)
-router.get('/', requireLogin, async (req, res) => {
+router.get('/invoices', requireLogin, async (req, res) => {
   try {
     const rows = await db.select({
       invoice: invoices,
@@ -124,7 +124,7 @@ router.get('/', requireLogin, async (req, res) => {
 });
 
 // GET /api/invoices/:id  (PUBLIC — no auth required)
-router.get('/:id', async (req, res) => {
+router.get('/invoices/:id', async (req, res) => {
   try {
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
@@ -160,13 +160,35 @@ router.get('/:id', async (req, res) => {
 });
 
 // GET /api/invoices/:id/pdf
-router.get('/:id/pdf', async (req, res) => {
+router.get('/invoices/:id/pdf', async (req, res) => {
   try {
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
 
-    const pdfPath = path.join(__dirname, '../../uploads/invoices', `${invoice.id}.pdf`);
-    if (!fs.existsSync(pdfPath)) return res.status(404).json({ error: 'PDF_NOT_FOUND' });
+    const invoicesDir = path.join(__dirname, '../../uploads/invoices');
+    const pdfPath = path.join(invoicesDir, `${invoice.id}.pdf`);
+
+    if (!fs.existsSync(pdfPath)) {
+      // Regenerate if file is missing (e.g. volume was wiped or invoice predates PDF gen)
+      const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+      const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+      const items = await db.select({
+        item: order_items,
+        product_name: products.name,
+        product_sku: products.sku,
+      })
+        .from(order_items)
+        .leftJoin(products, eq(order_items.product_id, products.id))
+        .where(eq(order_items.order_id, order.id));
+
+      fs.mkdirSync(invoicesDir, { recursive: true });
+      await generateInvoicePDF({
+        invoice,
+        order,
+        patient,
+        items: items.map(r => ({ ...r.item, product_name: r.product_name })),
+      }, pdfPath);
+    }
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${invoice.invoice_number}.pdf"`);
