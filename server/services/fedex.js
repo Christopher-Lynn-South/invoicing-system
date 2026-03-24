@@ -47,13 +47,15 @@ async function createShipment({ service_type, box_type, weight_lbs, recipient })
 
   const streetLines = [shipperStreet, shipperStreet2].filter(Boolean);
 
+  const shipDatestamp = new Date().toISOString().split('T')[0];
+
   const payload = {
     labelResponseOptions: 'URL_ONLY',
     requestedShipment: {
       shipper: {
         contact: {
           companyName: shipperName,
-          ...(shipperPhone && { phoneNumber: shipperPhone }),
+          phoneNumber: shipperPhone || '0000000000',
         },
         address: {
           streetLines: streetLines.length ? streetLines : ['123 Main St'],
@@ -65,7 +67,7 @@ async function createShipment({ service_type, box_type, weight_lbs, recipient })
       },
       recipients: [
         {
-          contact: { personName: recipient.name },
+          contact: { personName: recipient.name, phoneNumber: '0000000000' },
           address: {
             streetLines: [recipient.street],
             city: recipient.city,
@@ -75,9 +77,11 @@ async function createShipment({ service_type, box_type, weight_lbs, recipient })
           },
         },
       ],
+      shipDatestamp,
       serviceType: service_type,
-      packagingType: box_type,          // FEDEX_LARGE_BOX or FEDEX_EXTRA_LARGE_BOX
+      packagingType: box_type,
       pickupType: 'USE_SCHEDULED_PICKUP',
+      totalPackageCount: 1,
       shippingChargesPayment: {
         paymentType: 'SENDER',
         payor: { responsibleParty: { accountNumber: { value: process.env.FEDEX_ACCOUNT_NUMBER } } },
@@ -88,7 +92,7 @@ async function createShipment({ service_type, box_type, weight_lbs, recipient })
       },
       requestedPackageLineItems: [
         {
-          // No dimensions block — FedEx knows the dimensions of its own boxes
+          sequenceNumber: 1,
           weight: { units: 'LB', value: weight_lbs },
         },
       ],

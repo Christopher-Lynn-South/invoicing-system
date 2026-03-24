@@ -22,7 +22,7 @@ export default function AddressAutocomplete({ value, onChange, onSelect, placeho
     debounceRef.current = setTimeout(async () => {
       try {
         const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&q=${encodeURIComponent(q)}`,
+          `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&countrycodes=us&q=${encodeURIComponent(q)}`,
           { headers: { 'Accept-Language': 'en' } }
         );
         const data = await res.json();
