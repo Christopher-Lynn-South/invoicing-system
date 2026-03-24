@@ -1,11 +1,28 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import useOrderStore from '../store/useOrderStore';
+import api from '../lib/api';
 import { fmtCurrency, fmtDate } from '../lib/utils';
 
 export default function Invoices() {
   const invoices = useOrderStore(s => s.invoices);
   const fetchInvoices = useOrderStore(s => s.fetchInvoices);
+  const addToast = useOrderStore(s => s.addToast);
+  const [resending, setResending] = useState({});
+
+  async function resend(invoiceId) {
+    setResending(r => ({ ...r, [invoiceId]: true }));
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/resend`);
+      const parts = ['Invoice resent'];
+      if (data.sent.email) parts.push('email ✓');
+      if (data.sent.sms) parts.push('SMS ✓');
+      addToast(parts.join(' · '), 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Resend failed', 'error');
+    }
+    setResending(r => ({ ...r, [invoiceId]: false }));
+  }
 
   useEffect(() => { fetchInvoices(); }, []);
 
@@ -25,11 +42,12 @@ export default function Invoices() {
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Method</th>
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Status</th>
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Due</th>
+              <th style={{ padding: '12px 16px', textAlign: 'center' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {invoices.length === 0 ? (
-              <tr><td colSpan={9} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No invoices yet</td></tr>
+              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No invoices yet</td></tr>
             ) : invoices.map(inv => (
               <tr key={inv.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '12px 16px' }}>
@@ -54,6 +72,36 @@ export default function Invoices() {
                   <span className={`badge badge-${inv.pay_status}`}>{inv.pay_status}</span>
                 </td>
                 <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 13 }}>{fmtDate(inv.due_date)}</td>
+                <td style={{ padding: '12px 16px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                    <button
+                      onClick={() => resend(inv.id)}
+                      disabled={resending[inv.id]}
+                      title="Resend invoice via email + SMS"
+                      style={{
+                        fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
+                        border: '1px solid var(--accent)', color: 'var(--accent)', background: 'none',
+                        opacity: resending[inv.id] ? 0.5 : 1,
+                      }}
+                    >
+                      {resending[inv.id] ? 'Sending…' : '↩ Resend'}
+                    </button>
+                    {inv.pay_status === 'pending' && (
+                      <a
+                        href={`/pay/${inv.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Open payment portal"
+                        style={{
+                          fontSize: 11, padding: '4px 10px', borderRadius: 6,
+                          background: 'var(--accent)', color: '#fff', textDecoration: 'none',
+                        }}
+                      >
+                        Pay →
+                      </a>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>

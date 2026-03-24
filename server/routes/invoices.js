@@ -5,6 +5,7 @@ const { eq, sql } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { generateInvoicePDF } = require('../services/pdf');
 const { sendInvoiceEmail } = require('../services/mailer');
+const { sendInvoiceSMS } = require('../services/sms');
 const path = require('path');
 const fs = require('fs');
 
@@ -156,6 +157,37 @@ router.get('/invoices/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// POST /api/invoices/:id/resend  — admin resend invoice email + SMS
+router.post('/invoices/:id/resend', requireLogin, async (req, res) => {
+  try {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+    if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+    const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+
+    const sent = { email: false, sms: false };
+
+    try {
+      await sendInvoiceEmail(patient, order, invoice);
+      sent.email = true;
+    } catch (err) {
+      console.error('Resend invoice email failed:', err.message);
+    }
+
+    try {
+      sent.sms = await sendInvoiceSMS(patient, invoice);
+    } catch (err) {
+      console.error('Resend invoice SMS failed:', err.message);
+    }
+
+    return res.json({ ok: true, sent });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }
 });
 
