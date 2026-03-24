@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import api from '../lib/api';
 import useOrderStore from '../store/useOrderStore';
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function StatusRow({ label, checking, ok, error }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
@@ -17,29 +19,93 @@ function StatusRow({ label, checking, ok, error }) {
   );
 }
 
+function Field({ label, name, value, onChange, type = 'text', hint }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
+        {label}
+      </label>
+      <input
+        type={type}
+        name={name}
+        value={value}
+        onChange={onChange}
+        style={{ width: '100%' }}
+        autoComplete="off"
+      />
+      {hint && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{hint}</div>}
+    </div>
+  );
+}
+
+function SaveBar({ saving, saved, error, onSave }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+      <button onClick={onSave} disabled={saving} style={{
+        background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6,
+        padding: '8px 20px', fontWeight: 600, cursor: 'pointer', opacity: saving ? 0.7 : 1,
+      }}>
+        {saving ? 'Saving…' : 'Save'}
+      </button>
+      {saved && <span style={{ color: 'var(--success)', fontSize: 13 }}>✓ Saved</span>}
+      {error && <span style={{ color: 'var(--danger)', fontSize: 13 }}>{error}</span>}
+    </div>
+  );
+}
+
+// ─── Config section component ─────────────────────────────────────────────────
+
+function ConfigSection({ title, icon, fields, values, onChange, onSave, saving, saved, error, children }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, marginBottom: 16, overflow: 'hidden' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-primary)' }}
+      >
+        <span style={{ fontWeight: 600, fontSize: 15 }}>{icon} {title}</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{open ? '▲ collapse' : '▼ expand'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 20px 20px' }}>
+          {fields.map(f => (
+            <Field
+              key={f.name}
+              label={f.label}
+              name={f.name}
+              value={values[f.name] ?? ''}
+              onChange={onChange}
+              type={f.type || 'text'}
+              hint={f.hint}
+            />
+          ))}
+          {children}
+          <SaveBar saving={saving} saved={saved} error={error} onSave={onSave} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Staff manager (admin only) ───────────────────────────────────────────────
+
 function StaffManager() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const currentUser = useOrderStore(s => s.user);
-
-  // New user form
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('worker');
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
-
-  // Reset password state
   const [resetTarget, setResetTarget] = useState(null);
   const [resetPw, setResetPw] = useState('');
   const [resetMsg, setResetMsg] = useState('');
 
   useEffect(() => {
-    api.get('/auth/users')
-      .then(r => setUsers(r.data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    api.get('/auth/users').then(r => setUsers(r.data)).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
   async function handleCreate(e) {
@@ -81,8 +147,7 @@ function StaffManager() {
 
   return (
     <div>
-      {/* Staff list */}
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', marginBottom: 24 }}>
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', marginBottom: 16 }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', fontSize: 14, fontWeight: 600 }}>Staff Accounts</div>
         {users.map(u => (
           <div key={u.id} style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid var(--border)', gap: 12 }}>
@@ -113,26 +178,18 @@ function StaffManager() {
         ))}
       </div>
 
-      {/* Reset password inline form */}
       {resetTarget && (
-        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 24, maxWidth: 400 }}>
+        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 16, maxWidth: 420 }}>
           <div style={{ fontWeight: 600, marginBottom: 12 }}>Reset password for {resetTarget.name}</div>
           <form onSubmit={handleResetPassword} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input type="password" placeholder="New password (min 8)" value={resetPw} onChange={e => setResetPw(e.target.value)}
-              required minLength={8} style={{ flex: 1 }} />
-            <button type="submit" style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 14px', fontWeight: 600, cursor: 'pointer' }}>
-              Set
-            </button>
-            <button type="button" onClick={() => setResetTarget(null)}
-              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', cursor: 'pointer', color: 'var(--text-muted)' }}>
-              Cancel
-            </button>
+            <input type="password" placeholder="New password (min 8)" value={resetPw} onChange={e => setResetPw(e.target.value)} required minLength={8} style={{ flex: 1 }} />
+            <button type="submit" style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 14px', fontWeight: 600, cursor: 'pointer' }}>Set</button>
+            <button type="button" onClick={() => setResetTarget(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 14px', cursor: 'pointer', color: 'var(--text-muted)' }}>Cancel</button>
           </form>
           {resetMsg && <div style={{ fontSize: 13, marginTop: 8, color: resetMsg === 'Password reset.' ? 'var(--success)' : 'var(--danger)' }}>{resetMsg}</div>}
         </div>
       )}
 
-      {/* Add staff form */}
       <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20 }}>
         <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 14 }}>Add Staff User</div>
         <form onSubmit={handleCreate}>
@@ -168,9 +225,60 @@ function StaffManager() {
   );
 }
 
+// ─── Main Settings page ───────────────────────────────────────────────────────
+
+const SECTIONS = [
+  {
+    key: 'stripe',
+    title: 'Stripe Payments',
+    icon: '💳',
+    fields: [
+      { name: 'STRIPE_PUBLISHABLE_KEY', label: 'Publishable Key (pk_…)', hint: 'Used by the browser — not a secret' },
+      { name: 'STRIPE_SECRET_KEY', label: 'Secret Key (sk_…)', type: 'password' },
+      { name: 'STRIPE_WEBHOOK_SECRET', label: 'Webhook Secret (whsec_…)', type: 'password', hint: 'From Stripe Dashboard → Webhooks → your endpoint' },
+    ],
+  },
+  {
+    key: 'email',
+    title: 'Email / SMTP',
+    icon: '📧',
+    fields: [
+      { name: 'MAIL_HOST', label: 'SMTP Host' },
+      { name: 'MAIL_PORT', label: 'SMTP Port', hint: '587 for STARTTLS, 465 for SSL' },
+      { name: 'MAIL_USER', label: 'SMTP Username' },
+      { name: 'MAIL_PASS', label: 'SMTP Password', type: 'password' },
+      { name: 'MAIL_FROM', label: 'From Address', hint: 'e.g. "OrderFlow" <orders@001.com.mx>' },
+      { name: 'ADMIN_EMAIL', label: 'Admin Alert Email', hint: 'Receives system alerts and exception notifications' },
+    ],
+  },
+  {
+    key: 'fedex',
+    title: 'FedEx Shipping',
+    icon: '📦',
+    fields: [
+      { name: 'FEDEX_CLIENT_ID', label: 'Client ID' },
+      { name: 'FEDEX_CLIENT_SECRET', label: 'Client Secret', type: 'password' },
+      { name: 'FEDEX_ACCOUNT_NUMBER', label: 'Account Number' },
+      { name: 'FEDEX_SANDBOX', label: 'Use Sandbox', hint: 'true = test mode, false = live shipments' },
+    ],
+  },
+  {
+    key: 'app',
+    title: 'App',
+    icon: '⚙️',
+    fields: [
+      { name: 'BASE_URL', label: 'Base URL', hint: 'e.g. https://orders.001.com.mx — used in emails and payment links' },
+    ],
+  },
+];
+
 export default function Settings() {
   const user = useOrderStore(s => s.user);
-  const [emailStatus, setEmailStatus] = useState({ checking: true });
+  const [config, setConfig] = useState({});
+  const [configLoaded, setConfigLoaded] = useState(false);
+
+  // Per-section save state
+  const [sectionState, setSectionState] = useState({});
 
   // Change own password
   const [cpCurrent, setCpCurrent] = useState('');
@@ -178,11 +286,35 @@ export default function Settings() {
   const [cpMsg, setCpMsg] = useState('');
   const [cpError, setCpError] = useState('');
 
+  // Email test
+  const [testEmail, setTestEmail] = useState('');
+  const [testMsg, setTestMsg] = useState('');
+
   useEffect(() => {
-    api.get('/health/email')
-      .then(r => setEmailStatus({ checking: false, ok: r.data.ok, error: r.data.error }))
-      .catch(err => setEmailStatus({ checking: false, ok: false, error: err.response?.data?.error }));
+    api.get('/settings/config')
+      .then(r => { setConfig(r.data); setConfigLoaded(true); })
+      .catch(() => setConfigLoaded(true));
   }, []);
+
+  function handleChange(e) {
+    const { name, value } = e.target;
+    setConfig(c => ({ ...c, [name]: value }));
+  }
+
+  async function handleSaveSection(section) {
+    const keys = section.fields.map(f => f.name);
+    const payload = {};
+    keys.forEach(k => { payload[k] = config[k] ?? ''; });
+
+    setSectionState(s => ({ ...s, [section.key]: { saving: true, saved: false, error: null } }));
+    try {
+      await api.patch('/settings/config', payload);
+      setSectionState(s => ({ ...s, [section.key]: { saving: false, saved: true, error: null } }));
+      setTimeout(() => setSectionState(s => ({ ...s, [section.key]: { ...s[section.key], saved: false } })), 3000);
+    } catch (err) {
+      setSectionState(s => ({ ...s, [section.key]: { saving: false, saved: false, error: err.response?.data?.message || 'Save failed.' } }));
+    }
+  }
 
   async function handleChangePassword(e) {
     e.preventDefault();
@@ -196,25 +328,64 @@ export default function Settings() {
     }
   }
 
-  const stripeOk = !!import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
+  async function handleTestEmail(e) {
+    e.preventDefault();
+    setTestMsg('');
+    try {
+      await api.post('/settings/test-email', { to: testEmail });
+      setTestMsg('✓ Test email sent — check your inbox.');
+    } catch (err) {
+      setTestMsg('✗ ' + (err.response?.data?.error || 'Failed to send.'));
+    }
+  }
 
   return (
     <div>
       <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 28, marginBottom: 24 }}>Settings</h1>
 
-      {/* Integration status */}
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '0 24px', marginBottom: 24 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, padding: '16px 0', borderBottom: '1px solid var(--border)' }}>Integration Status</h2>
-        <StatusRow label="📧 Email (SMTP)" checking={emailStatus.checking} ok={emailStatus.ok} error={emailStatus.error} />
-        <StatusRow label="💳 Stripe Payments" checking={false} ok={stripeOk} error="VITE_STRIPE_PUBLISHABLE_KEY not set" />
-        <StatusRow label="📦 FedEx Shipping" checking={false} ok={!!import.meta.env.VITE_FEDEX_CONFIGURED} error="Configure FEDEX_CLIENT_ID in .env" />
-        <div style={{ padding: '12px 0' }} />
-      </div>
+      {/* ── Integration config sections ─────────────────────────────────────── */}
+      <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Integrations</h2>
+      {configLoaded && SECTIONS.map(section => {
+        const ss = sectionState[section.key] || {};
+        const isEmail = section.key === 'email';
+        return (
+          <ConfigSection
+            key={section.key}
+            title={section.title}
+            icon={section.icon}
+            fields={section.fields}
+            values={config}
+            onChange={handleChange}
+            onSave={() => handleSaveSection(section)}
+            saving={ss.saving}
+            saved={ss.saved}
+            error={ss.error}
+          >
+            {isEmail && (
+              <form onSubmit={handleTestEmail} style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0 12px' }}>
+                <input
+                  type="email"
+                  placeholder="Send test email to…"
+                  value={testEmail}
+                  onChange={e => setTestEmail(e.target.value)}
+                  required
+                  style={{ flex: 1 }}
+                />
+                <button type="submit" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--text-primary)' }}>
+                  Send test
+                </button>
+                {testMsg && <span style={{ fontSize: 13, color: testMsg.startsWith('✓') ? 'var(--success)' : 'var(--danger)' }}>{testMsg}</span>}
+              </form>
+            )}
+          </ConfigSection>
+        );
+      })}
 
-      {/* Change own password */}
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, marginBottom: 24 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Change Your Password</h2>
-        <form onSubmit={handleChangePassword} style={{ maxWidth: 360 }}>
+      {/* ── Change own password ─────────────────────────────────────────────── */}
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '24px 0 12px' }}>Your Account</h2>
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 24, maxWidth: 420 }}>
+        <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 14 }}>Change Password</div>
+        <form onSubmit={handleChangePassword}>
           <div style={{ marginBottom: 12 }}>
             <label style={{ display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>Current password</label>
             <input type="password" value={cpCurrent} onChange={e => setCpCurrent(e.target.value)} required style={{ width: '100%' }} />
@@ -231,21 +402,25 @@ export default function Settings() {
         </form>
       </div>
 
-      {/* Staff management — admin only */}
+      {/* ── Staff management (admin only) ───────────────────────────────────── */}
       {user?.role === 'admin' && (
-        <div style={{ marginBottom: 24 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Staff Management</h2>
+        <>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Staff Management</h2>
           <StaffManager />
-        </div>
+        </>
       )}
 
-      {/* Config notes */}
-      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Configuration</h2>
+      {/* ── Server info ─────────────────────────────────────────────────────── */}
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginTop: 8 }}>
+        <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14 }}>Server</div>
         <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.8 }}>
-          <p>All configuration is managed via the <code style={{ fontFamily: 'var(--brand-mono)', background: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: 4 }}>.env</code> file on the server.</p>
-          <p style={{ marginTop: 8 }}>To update Stripe, FedEx, email, or other settings, update the environment variables and restart the OrderFlow service.</p>
-          <p style={{ marginTop: 8 }}>Server: <code style={{ fontFamily: 'var(--brand-mono)', background: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: 4 }}>docker compose restart app</code></p>
+          <p>Settings saved here are stored in the database and take effect immediately — no restart needed.</p>
+          <p style={{ marginTop: 6 }}>
+            <code style={{ fontFamily: 'var(--brand-mono)', background: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: 4 }}>POSTGRES_PASSWORD</code> and{' '}
+            <code style={{ fontFamily: 'var(--brand-mono)', background: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: 4 }}>SESSION_SECRET</code>{' '}
+            must be set in the <code style={{ fontFamily: 'var(--brand-mono)', background: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: 4 }}>.env</code> file on the server.
+          </p>
+          <p style={{ marginTop: 6 }}>Restart: <code style={{ fontFamily: 'var(--brand-mono)', background: 'var(--bg-elevated)', padding: '1px 6px', borderRadius: 4 }}>docker compose restart app</code></p>
         </div>
       </div>
     </div>

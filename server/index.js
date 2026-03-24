@@ -59,10 +59,15 @@ app.use(session({
 // Serve uploaded invoices and labels
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// ─── Load DB settings into process.env before routes start ───────────────────
+const { loadSettings } = require('./services/config');
+loadSettings(); // non-blocking; falls back to .env values on DB error
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth/login', authLimiter);
 app.use('/api/patient/login', authLimiter);
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/settings', require('./routes/settings'));
 app.use('/api/patient', require('./routes/patient-auth'));
 app.use('/api/patient', require('./routes/patient-portal'));
 app.use('/api/patients', require('./routes/patients'));

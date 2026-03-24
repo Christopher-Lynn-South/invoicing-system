@@ -3,27 +3,52 @@ const nodemailer = require('nodemailer');
 const { db } = require('../db');
 const { patient_contacts } = require('../db/schema');
 const { eq, and } = require('drizzle-orm');
+const { onKeyChange } = require('./config');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.MAIL_HOST || 'mail.001.com.mx',
-  port: parseInt(process.env.MAIL_PORT || '587', 10),
-  secure: false,
-  requireTLS: true,
-  auth: {
-    user: process.env.MAIL_USER || 'orders@001.com.mx',
-    pass: process.env.MAIL_PASS || '',
-  },
-  tls: {
-    rejectUnauthorized: process.env.NODE_ENV === 'production',
-    minVersion: 'TLSv1.2',
-  },
-});
+// ─── Lazy transporter — recreated whenever SMTP settings change ───────────────
+let _transporter = null;
+
+function buildTransporter() {
+  return nodemailer.createTransport({
+    host: process.env.MAIL_HOST || 'mail.001.com.mx',
+    port: parseInt(process.env.MAIL_PORT || '587', 10),
+    secure: false,
+    requireTLS: true,
+    auth: {
+      user: process.env.MAIL_USER || 'orders@001.com.mx',
+      pass: process.env.MAIL_PASS || '',
+    },
+    tls: {
+      rejectUnauthorized: process.env.NODE_ENV === 'production',
+      minVersion: 'TLSv1.2',
+    },
+  });
+}
+
+function getTransporter() {
+  if (!_transporter) {
+    _transporter = buildTransporter();
+  }
+  return _transporter;
+}
+
+function invalidateTransporter() {
+  _transporter = null;
+}
+
+// Invalidate whenever any SMTP setting changes
+['MAIL_HOST', 'MAIL_PORT', 'MAIL_USER', 'MAIL_PASS'].forEach(k => onKeyChange(k, invalidateTransporter));
+
+// Expose transporter getter for health check endpoint
+const transporter = { verify: (...args) => getTransporter().verify(...args) };
 
 // Verify on startup (non-fatal)
-transporter.verify((err) => {
-  if (err) console.error('SMTP connection failed:', err.message);
-  else console.log('SMTP ready via STARTTLS → mail.001.com.mx:587');
-});
+setTimeout(() => {
+  getTransporter().verify((err) => {
+    if (err) console.error('SMTP connection failed:', err.message);
+    else console.log('Mailer OK');
+  });
+}, 0);
 
 async function getRecipients(patientId, patientEmail) {
   const contacts = await db.select().from(patient_contacts)
@@ -37,8 +62,8 @@ async function getRecipients(patientId, patientEmail) {
   return { to: patientEmail, cc };
 }
 
-const FROM = process.env.MAIL_FROM || '"OrderFlow" <orders@001.com.mx>';
-const BASE_URL = process.env.BASE_URL || 'https://orders.001.com.mx';
+const getFrom = () => process.env.MAIL_FROM || '"OrderFlow" <orders@001.com.mx>';
+const getBaseUrl = () => process.env.BASE_URL || 'https://orders.001.com.mx';
 
 function htmlWrap(body) {
   return `
@@ -58,9 +83,9 @@ function htmlWrap(body) {
 async function sendInvoiceEmail(patient, order, invoice) {
   const { to, cc } = await getRecipients(patient.id, patient.email);
   if (!to) return;
-  const payUrl = `${BASE_URL}/pay/${invoice.id}`;
-  await transporter.sendMail({
-    from: FROM,
+  const payUrl = `${getBaseUrl()}/pay/${invoice.id}`;
+  await getTransporter().sendMail({
+    from: getFrom(),
     to,
     cc: cc.length ? cc : undefined,
     subject: `Invoice ${invoice.invoice_number} from Corp 001 — $${parseFloat(invoice.total).toFixed(2)} due`,
@@ -85,8 +110,8 @@ async function sendPaymentConfirmation(patient, order, invoice, method) {
     ach: `ACH payment confirmed — Order ${order.order_number}`,
     usdc: `USDC payment confirmed — Order ${order.order_number}`,
   };
-  await transporter.sendMail({
-    from: FROM,
+  await getTransporter().sendMail({
+    from: getFrom(),
     to,
     cc: cc.length ? cc : undefined,
     subject: subjects[method] || `Payment confirmed — Order ${order.order_number}`,
@@ -105,8 +130,8 @@ async function sendShippingNotification(patient, order, shipment) {
   const { to, cc } = await getRecipients(patient.id, patient.email);
   if (!to) return;
   const trackUrl = `https://www.fedex.com/fedextrack/?tracknumbers=${shipment.fedex_tracking_number}`;
-  await transporter.sendMail({
-    from: FROM,
+  await getTransporter().sendMail({
+    from: getFrom(),
     to,
     cc: cc.length ? cc : undefined,
     subject: `Your order ${order.order_number} has shipped — Track: ${shipment.fedex_tracking_number}`,
@@ -138,8 +163,8 @@ async function sendTrackingUpdate(patient, order, shipment, eventCode, eventDesc
 
   const subject = subjects[eventCode] || `Shipping update for Order ${order.order_number}`;
 
-  await transporter.sendMail({
-    from: FROM,
+  await getTransporter().sendMail({
+    from: getFrom(),
     to,
     cc: cc.length ? cc : undefined,
     subject,
@@ -158,8 +183,8 @@ async function sendTrackingUpdate(patient, order, shipment, eventCode, eventDesc
 async function sendAdminAlert(subject, body) {
   const adminEmail = process.env.ADMIN_EMAIL;
   if (!adminEmail) return;
-  await transporter.sendMail({
-    from: FROM,
+  await getTransporter().sendMail({
+    from: getFrom(),
     to: adminEmail,
     subject,
     html: htmlWrap(`<h2>${subject}</h2>${body}<div class="footer">OrderFlow System Alert</div>`),
@@ -168,12 +193,12 @@ async function sendAdminAlert(subject, body) {
 
 async function sendReminderEmail(patient, product, rule) {
   if (!patient.email) return;
-  const reorderUrl = `${BASE_URL}/reorder/${rule.id}`;
+  const reorderUrl = `${getBaseUrl()}/reorder/${rule.id}`;
   const lastOrderDate = rule.last_reminded_at
     ? new Date(rule.last_reminded_at).toLocaleDateString('en-US')
     : 'N/A';
-  await transporter.sendMail({
-    from: FROM,
+  await getTransporter().sendMail({
+    from: getFrom(),
     to: patient.email,
     subject: `Time to restock — ${product.name} for ${patient.name}`,
     html: htmlWrap(`
@@ -184,15 +209,22 @@ async function sendReminderEmail(patient, product, rule) {
       <p>Last reminded: ${lastOrderDate}</p>
       <a href="${reorderUrl}" class="btn">Place Reorder</a>
       <p style="margin-top:16px;font-size:12px;color:#9ca3af">
-        <a href="${BASE_URL}/reminders">Manage reminder settings</a>
+        <a href="${getBaseUrl()}/reminders">Manage reminder settings</a>
       </p>
       <div class="footer">Corp 001 Inc. · orders@001.com.mx</div>
     `),
   });
 }
 
+// Generic sendMail helper used by patient-auth and settings test
+async function sendMail(options) {
+  await getTransporter().sendMail({ from: getFrom(), ...options });
+}
+
 module.exports = {
   transporter,
+  sendMail,
+  invalidateTransporter,
   sendInvoiceEmail,
   sendPaymentConfirmation,
   sendShippingNotification,

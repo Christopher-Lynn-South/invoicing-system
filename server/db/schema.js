@@ -181,7 +181,15 @@ const patient_contacts = pgTable('patient_contacts', {
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
+// ─── app_settings ─────────────────────────────────────────────────────────────
+const app_settings = pgTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value'),
+  updated_at: timestamp('updated_at', { withTimezone: true }).default(sql`now()`),
+});
+
 module.exports = {
+  app_settings,
   patients,
   admin_users,
   products,
