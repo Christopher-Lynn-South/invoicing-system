@@ -4,6 +4,19 @@ import api from '../lib/api';
 import useOrderStore from '../store/useOrderStore';
 import { fmtCurrency, fmtDate, fmtDatetime, relativeTime } from '../lib/utils';
 import Modal from '../components/Modal';
+import AddressAutocomplete from '../components/AddressAutocomplete';
+
+const BOX_WEIGHT_MAX = {
+  FEDEX_ENVELOPE: 0.5,
+  FEDEX_PAK: 10,
+  FEDEX_TUBE: 20,
+  FEDEX_SMALL_BOX: 20,
+  FEDEX_MEDIUM_BOX: 20,
+  FEDEX_LARGE_BOX: 20,
+  FEDEX_EXTRA_LARGE_BOX: 20,
+  FEDEX_10KG_BOX: 22,
+  FEDEX_25KG_BOX: 55,
+};
 
 function PipelineStep({ label, active, done }) {
   return (
@@ -31,7 +44,7 @@ export default function OrderDetail() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [shipModal, setShipModal] = useState(false);
-  const [shipForm, setShipForm] = useState({ service: 'FEDEX_GROUND', box_type: 'FEDEX_LARGE_BOX', weight_lbs: '' });
+  const [shipForm, setShipForm] = useState({ service: 'FEDEX_GROUND', box_type: 'FEDEX_LARGE_BOX', weight_lbs: '', recipient_name: '', recipient_street: '', recipient_city: '', recipient_state: '', recipient_zip: '', recipient_country: 'US' });
   const [shipping, setShipping] = useState(false);
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [resendingInvoice, setResendingInvoice] = useState(false);
@@ -67,6 +80,12 @@ export default function OrderDetail() {
         service: shipForm.service,
         box_type: shipForm.box_type,
         weight_lbs: parseFloat(shipForm.weight_lbs),
+        recipient_name: shipForm.recipient_name || undefined,
+        recipient_street: shipForm.recipient_street || undefined,
+        recipient_city: shipForm.recipient_city || undefined,
+        recipient_state: shipForm.recipient_state || undefined,
+        recipient_zip: shipForm.recipient_zip || undefined,
+        recipient_country: shipForm.recipient_country || undefined,
       });
       addToast('Shipping label created!', 'success');
       setShipModal(false);
@@ -267,7 +286,11 @@ export default function OrderDetail() {
             ) : !hasShipment ? (
               <div>
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Invoice paid. Ready to ship.</p>
-                <button onClick={() => setShipModal(true)} style={{
+                <button onClick={() => {
+                  const a = order.patient?.billing_address || {};
+                  setShipForm(f => ({ ...f, recipient_name: order.patient?.name || '', recipient_street: a.street || '', recipient_city: a.city || '', recipient_state: a.state || '', recipient_zip: a.zip || '', recipient_country: a.country || 'US' }));
+                  setShipModal(true);
+                }} style={{
                   background: 'var(--success)', color: '#fff', border: 'none',
                   borderRadius: 8, padding: '8px 20px', fontWeight: 600, fontSize: 13,
                 }}>Create FedEx Label</button>
@@ -387,12 +410,40 @@ export default function OrderDetail() {
               <option value="FEDEX_25KG_BOX">FedEx 25kg Box</option>
             </select>
           </div>
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Weight (lbs)</label>
-            <input type="number" step="0.01" min="0.1" required value={shipForm.weight_lbs}
-              onChange={e => setShipForm({ ...shipForm, weight_lbs: e.target.value })} style={{ width: '100%' }} />
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>
+              Weight (lbs)
+              {BOX_WEIGHT_MAX[shipForm.box_type] && (
+                <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 6 }}>
+                  max {BOX_WEIGHT_MAX[shipForm.box_type]} lbs for this box
+                </span>
+              )}
+            </label>
+            <input type="number" step="0.01" min="0.1" max={BOX_WEIGHT_MAX[shipForm.box_type] || undefined} required
+              value={shipForm.weight_lbs} onChange={e => setShipForm({ ...shipForm, weight_lbs: e.target.value })} style={{ width: '100%' }} />
           </div>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+          <div style={{ marginBottom: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600 }}>Ship To (editable)</label>
+            <div style={{ marginBottom: 8 }}>
+              <input placeholder="Recipient name" value={shipForm.recipient_name}
+                onChange={e => setShipForm({ ...shipForm, recipient_name: e.target.value })} style={{ width: '100%' }} />
+            </div>
+            <AddressAutocomplete
+              value={shipForm.recipient_street}
+              onChange={v => setShipForm(f => ({ ...f, recipient_street: v }))}
+              onSelect={a => setShipForm(f => ({ ...f, recipient_street: a.street, recipient_city: a.city, recipient_state: a.state, recipient_zip: a.zip, recipient_country: a.country }))}
+              placeholder="Street address"
+              style={{ marginBottom: 8 }}
+            />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: 6, marginBottom: 8 }}>
+              <input placeholder="City" value={shipForm.recipient_city} onChange={e => setShipForm({ ...shipForm, recipient_city: e.target.value })} />
+              <input placeholder="State" value={shipForm.recipient_state} onChange={e => setShipForm({ ...shipForm, recipient_state: e.target.value })} />
+              <input placeholder="ZIP" value={shipForm.recipient_zip} onChange={e => setShipForm({ ...shipForm, recipient_zip: e.target.value })} />
+            </div>
+            <input placeholder="Country (e.g. US)" value={shipForm.recipient_country}
+              onChange={e => setShipForm({ ...shipForm, recipient_country: e.target.value })} style={{ width: '100%' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
             <button type="button" onClick={() => setShipModal(false)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
             <button type="submit" disabled={shipping} style={{ background: 'var(--success)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600 }}>
               {shipping ? 'Creating…' : 'Create Label'}

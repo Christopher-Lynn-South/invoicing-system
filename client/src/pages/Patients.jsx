@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import useOrderStore from '../store/useOrderStore';
 import api from '../lib/api';
 import Modal from '../components/Modal';
+import AddressAutocomplete from '../components/AddressAutocomplete';
 
 export default function Patients() {
   const patients = useOrderStore(s => s.patients);
@@ -86,7 +87,13 @@ export default function Patients() {
           ))}
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: 'block', fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>Billing Address</label>
-            <input placeholder="Street" value={form.billing_address.street} onChange={e => setAddr('street', e.target.value)} style={{ width: '100%', marginBottom: 6 }} />
+            <AddressAutocomplete
+              value={form.billing_address.street}
+              onChange={v => setAddr('street', v)}
+              onSelect={a => setForm(f => ({ ...f, billing_address: { ...f.billing_address, street: a.street, city: a.city, state: a.state, zip: a.zip, country: a.country } }))}
+              placeholder="Street address"
+              style={{ marginBottom: 6 }}
+            />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: 6 }}>
               <input placeholder="City" value={form.billing_address.city} onChange={e => setAddr('city', e.target.value)} />
               <input placeholder="State" value={form.billing_address.state} onChange={e => setAddr('state', e.target.value)} />
