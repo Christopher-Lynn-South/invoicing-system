@@ -372,8 +372,15 @@ export default function OrderDetail() {
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Box Type</label>
             <select value={shipForm.box_type} onChange={e => setShipForm({ ...shipForm, box_type: e.target.value })} style={{ width: '100%' }}>
+              <option value="FEDEX_ENVELOPE">FedEx Envelope</option>
+              <option value="FEDEX_PAK">FedEx Pak</option>
+              <option value="FEDEX_TUBE">FedEx Tube</option>
+              <option value="FEDEX_SMALL_BOX">FedEx Small Box</option>
+              <option value="FEDEX_MEDIUM_BOX">FedEx Medium Box</option>
               <option value="FEDEX_LARGE_BOX">FedEx Large Box</option>
               <option value="FEDEX_EXTRA_LARGE_BOX">FedEx Extra Large Box</option>
+              <option value="FEDEX_10KG_BOX">FedEx 10kg Box</option>
+              <option value="FEDEX_25KG_BOX">FedEx 25kg Box</option>
             </select>
           </div>
           <div style={{ marginBottom: 20 }}>
