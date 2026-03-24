@@ -33,6 +33,27 @@ export default function PatientDetail() {
 
   useEffect(() => { load(); }, [id]);
 
+  async function grantPortalAccess() {
+    try {
+      await api.post(`/patient/grant-access/${id}`);
+      addToast('Portal access granted — credentials emailed to patient.', 'success');
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to grant access.', 'error');
+    }
+  }
+
+  async function revokePortalAccess() {
+    if (!window.confirm('Revoke this patient\'s portal access?')) return;
+    try {
+      await api.post(`/patient/revoke-access/${id}`);
+      addToast('Portal access revoked.', 'success');
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to revoke access.', 'error');
+    }
+  }
+
   async function saveContact(e) {
     e.preventDefault();
     try {
@@ -66,6 +87,28 @@ export default function PatientDetail() {
           )}
           <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>{patient.email}</p>
         </div>
+        {/* Portal access controls */}
+        {patient.email && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{
+              fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1,
+              color: patient.portal_enabled ? 'var(--success)' : 'var(--text-muted)',
+              background: patient.portal_enabled ? 'var(--success)22' : 'var(--bg-elevated)',
+              padding: '2px 8px', borderRadius: 20,
+            }}>
+              Portal {patient.portal_enabled ? 'enabled' : 'disabled'}
+            </span>
+            {patient.portal_enabled ? (
+              <button onClick={revokePortalAccess} style={{ fontSize: 12, color: 'var(--danger)', background: 'none', border: '1px solid var(--danger)44', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>
+                Revoke access
+              </button>
+            ) : (
+              <button onClick={grantPortalAccess} style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)44', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}>
+                Grant portal access
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Banners */}

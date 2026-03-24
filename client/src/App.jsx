@@ -6,6 +6,8 @@ import api from './lib/api';
 import Layout from './components/Layout';
 import Toast from './components/Toast';
 import Login from './pages/Login';
+import PatientLogin from './pages/PatientLogin';
+import PatientPortal from './pages/PatientPortal';
 import Dashboard from './pages/Dashboard';
 import Orders from './pages/Orders';
 import OrderDetail from './pages/OrderDetail';
@@ -24,20 +26,31 @@ function RequireAuth({ children }) {
   return children;
 }
 
+function RequirePatientAuth({ children }) {
+  const patientUser = useOrderStore(s => s.patientUser);
+  if (patientUser === undefined) return null;
+  if (!patientUser) return <Navigate to="/patient/login" replace />;
+  return children;
+}
+
 export default function App() {
   const setUser = useOrderStore(s => s.setUser);
+  const setPatientUser = useOrderStore(s => s.setPatientUser);
   const toasts = useOrderStore(s => s.toasts);
   const removeToast = useOrderStore(s => s.removeToast);
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    api.get('/auth/me')
-      .then(res => {
-        if (res.data.authenticated) setUser(res.data);
-        else setUser(null);
-      })
-      .catch(() => setUser(null))
-      .finally(() => setAuthChecked(true));
+    // Check both sessions in parallel
+    Promise.all([
+      api.get('/auth/me').then(res => {
+        setUser(res.data.authenticated ? res.data : null);
+      }).catch(() => setUser(null)),
+
+      api.get('/patient/me').then(res => {
+        setPatientUser(res.data.authenticated ? res.data : null);
+      }).catch(() => setPatientUser(null)),
+    ]).finally(() => setAuthChecked(true));
   }, []);
 
   if (!authChecked) {
@@ -56,7 +69,11 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/pay/:invoiceId" element={<PayPage />} />
 
-        {/* Protected routes */}
+        {/* Patient portal */}
+        <Route path="/patient/login" element={<PatientLogin />} />
+        <Route path="/patient/portal" element={<RequirePatientAuth><PatientPortal /></RequirePatientAuth>} />
+
+        {/* Admin / staff routes */}
         <Route path="/" element={<RequireAuth><Layout /></RequireAuth>}>
           <Route index element={<Dashboard />} />
           <Route path="orders" element={<Orders />} />

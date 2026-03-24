@@ -12,6 +12,7 @@ async function seed() {
     email: 'admin@001.com.mx',
     password_hash: passwordHash,
     name: 'Admin',
+    role: 'admin',
   }).onConflictDoNothing();
 
   console.log('Seed complete. Admin user: admin@001.com.mx / Admin@OrderFlow1!');

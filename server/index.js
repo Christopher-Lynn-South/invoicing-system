@@ -4,6 +4,16 @@ const session = require('express-session');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const rateLimit = require('express-rate-limit');
+
+// ─── Auth rate limiters ───────────────────────────────────────────────────────
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'TOO_MANY_REQUESTS', message: 'Too many login attempts. Try again in 15 minutes.' },
+});
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,7 +52,11 @@ app.use(session({
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
+app.use('/api/auth/login', authLimiter);
+app.use('/api/patient/login', authLimiter);
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/patient', require('./routes/patient-auth'));
+app.use('/api/patient', require('./routes/patient-portal'));
 app.use('/api/patients', require('./routes/patients'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/orders', require('./routes/orders'));

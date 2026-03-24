@@ -2,9 +2,13 @@ import { create } from 'zustand';
 import api from '../lib/api';
 
 const useOrderStore = create((set, get) => ({
-  // Auth
+  // Auth — admin/worker session
   user: null,
   setUser: (user) => set({ user }),
+
+  // Auth — patient session
+  patientUser: undefined,
+  setPatientUser: (u) => set({ patientUser: u }),
 
   // Orders
   orders: [],

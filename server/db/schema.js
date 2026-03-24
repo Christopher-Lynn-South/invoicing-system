@@ -25,6 +25,8 @@ const patients = pgTable('patients', {
   stripe_customer_id: text('stripe_customer_id'),
   requires_prescription: boolean('requires_prescription').default(false),
   active_prescription_id: uuid('active_prescription_id'),
+  password_hash: text('password_hash'),
+  portal_enabled: boolean('portal_enabled').notNull().default(false),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
   updated_at: timestamp('updated_at', { withTimezone: true }).default(sql`now()`),
 });
@@ -35,6 +37,7 @@ const admin_users = pgTable('admin_users', {
   email: text('email').unique().notNull(),
   password_hash: text('password_hash').notNull(),
   name: text('name').notNull(),
+  role: text('role').notNull().default('worker'), // 'admin' | 'worker'
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
