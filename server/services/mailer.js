@@ -63,7 +63,7 @@ async function getRecipients(patientId, patientEmail) {
 }
 
 const getFrom = () => process.env.MAIL_FROM || '"OrderFlow" <orders@001.com.mx>';
-const getBaseUrl = () => process.env.BASE_URL || 'https://orders.001.com.mx';
+const getBaseUrl = () => process.env.BASE_URL || 'https://orders.corp001.us';
 
 function htmlWrap(body) {
   return `
@@ -83,7 +83,9 @@ function htmlWrap(body) {
 async function sendInvoiceEmail(patient, order, invoice) {
   const { to, cc } = await getRecipients(patient.id, patient.email);
   if (!to) return;
-  const payUrl = `${getBaseUrl()}/pay/${invoice.id}`;
+  const payUrl = invoice.pay_token
+    ? `${getBaseUrl()}/pay/t/${invoice.pay_token}`
+    : `${getBaseUrl()}/pay/${invoice.id}`;
   await getTransporter().sendMail({
     from: getFrom(),
     to,

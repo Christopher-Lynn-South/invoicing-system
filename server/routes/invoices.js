@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { db } = require('../db');
 const { invoices, sales_orders, order_items, products, patients } = require('../db/schema');
 const { eq, sql } = require('drizzle-orm');
@@ -8,6 +9,18 @@ const { sendInvoiceEmail } = require('../services/mailer');
 const { sendInvoiceSMS } = require('../services/sms');
 const path = require('path');
 const fs = require('fs');
+
+// ─── Pay-link token helpers ────────────────────────────────────────────────────
+
+function generatePayToken() {
+  return crypto.randomBytes(32).toString('hex'); // 64-char hex, URL-safe
+}
+
+function payTokenExpiresAt(days = 3) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d;
+}
 
 const router = express.Router();
 
@@ -62,6 +75,8 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
       total: subtotal.toFixed(2),
       pay_status: 'pending',
       due_date,
+      pay_token: generatePayToken(),
+      pay_token_expires_at: payTokenExpiresAt(3),
     }).returning();
 
     // Update order status
@@ -124,6 +139,47 @@ router.get('/invoices', requireLogin, async (req, res) => {
   }
 });
 
+// GET /api/invoices/by-token/:token  (PUBLIC — validates expiring pay-link token)
+router.get('/invoices/by-token/:token', async (req, res) => {
+  try {
+    const [invoice] = await db.select().from(invoices)
+      .where(eq(invoices.pay_token, req.params.token));
+
+    if (!invoice) return res.status(404).json({ error: 'NOT_FOUND', message: 'Payment link not found.' });
+
+    if (!invoice.pay_token_expires_at || new Date() > new Date(invoice.pay_token_expires_at)) {
+      return res.status(410).json({ error: 'LINK_EXPIRED', message: 'This payment link has expired. Please contact us to receive a new one.' });
+    }
+
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+    const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+    const items = await db.select({
+      item: order_items,
+      product_name: products.name,
+      product_sku: products.sku,
+    })
+      .from(order_items)
+      .leftJoin(products, eq(order_items.product_id, products.id))
+      .where(eq(order_items.order_id, order.id));
+
+    const publicPatient = {
+      name: patient.name,
+      email: patient.email,
+      billing_address: patient.billing_address,
+    };
+
+    return res.json({
+      ...invoice,
+      order,
+      patient: publicPatient,
+      items: items.map(r => ({ ...r.item, product_name: r.product_name, product_sku: r.product_sku })),
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
 // GET /api/invoices/:id  (PUBLIC — no auth required)
 router.get('/invoices/:id', async (req, res) => {
   try {
@@ -163,8 +219,14 @@ router.get('/invoices/:id', async (req, res) => {
 // POST /api/invoices/:id/resend  — admin resend invoice email + SMS
 router.post('/invoices/:id/resend', requireLogin, async (req, res) => {
   try {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
-    if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
+    const [order_for_invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+    if (!order_for_invoice) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    // Regenerate token — gives patient a fresh 3-day window from now
+    const [invoice] = await db.update(invoices)
+      .set({ pay_token: generatePayToken(), pay_token_expires_at: payTokenExpiresAt(3) })
+      .where(eq(invoices.id, req.params.id))
+      .returning();
 
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));

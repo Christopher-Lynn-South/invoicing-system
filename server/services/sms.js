@@ -1,6 +1,6 @@
 const twilio = require('twilio');
 
-const getBaseUrl = () => process.env.BASE_URL || 'https://orders.001.com.mx';
+const getBaseUrl = () => process.env.BASE_URL || 'https://orders.corp001.us';
 
 function getClient() {
   const sid = process.env.TWILIO_ACCOUNT_SID;
@@ -46,7 +46,9 @@ async function sendSMS(to, body) {
 
 async function sendInvoiceSMS(patient, invoice) {
   if (!patient.phone) return false;
-  const payUrl = `${getBaseUrl()}/pay/${invoice.id}`;
+  const payUrl = invoice.pay_token
+    ? `${getBaseUrl()}/pay/t/${invoice.pay_token}`
+    : `${getBaseUrl()}/pay/${invoice.id}`;
   const body = `Corp 001: Invoice ${invoice.invoice_number} for $${parseFloat(invoice.total).toFixed(2)} USD is ready. Pay here: ${payUrl}`;
   try {
     return await sendSMS(patient.phone, body);

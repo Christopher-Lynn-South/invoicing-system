@@ -89,6 +89,8 @@ const invoices = pgTable('invoices', {
   due_date: date('due_date'),
   pdf_url: text('pdf_url'),
   sent_at: timestamp('sent_at', { withTimezone: true }),
+  pay_token: text('pay_token').unique(),
+  pay_token_expires_at: timestamp('pay_token_expires_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 

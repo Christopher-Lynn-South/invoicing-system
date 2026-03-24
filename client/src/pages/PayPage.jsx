@@ -5,16 +5,28 @@ import PatientPayPortal from '../components/PatientPayPortal';
 import { fmtDate } from '../lib/utils';
 
 export default function PayPage() {
-  const { invoiceId } = useParams();
+  const { invoiceId, token } = useParams();
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [expired, setExpired] = useState(false);
 
   useEffect(() => {
-    axios.get(`/api/invoices/${invoiceId}`)
+    const url = token
+      ? `/api/invoices/by-token/${token}`
+      : `/api/invoices/${invoiceId}`;
+
+    axios.get(url)
       .then(res => { setInvoice(res.data); setLoading(false); })
-      .catch(() => { setError('Invoice not found.'); setLoading(false); });
-  }, [invoiceId]);
+      .catch(err => {
+        if (err.response?.status === 410) {
+          setExpired(true);
+        } else {
+          setError('Invoice not found or the link is invalid.');
+        }
+        setLoading(false);
+      });
+  }, [invoiceId, token]);
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 20px' }}>
@@ -25,7 +37,27 @@ export default function PayPage() {
       </div>
 
       {loading && <div style={{ color: 'var(--text-muted)' }}>Loading invoice…</div>}
+
+      {expired && (
+        <div style={{
+          background: 'var(--bg-surface)', border: '1px solid var(--border)',
+          borderRadius: 12, padding: 40, textAlign: 'center', maxWidth: 420,
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⏰</div>
+          <h2 style={{ color: 'var(--warning)', marginBottom: 12 }}>Payment Link Expired</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 14, lineHeight: 1.6 }}>
+            This link is only valid for 3 days after it is sent.
+            Please contact us and we will send you a new link right away.
+          </p>
+          <p style={{ marginTop: 20, fontSize: 13, color: 'var(--text-muted)' }}>
+            <strong>Corp 001 Inc.</strong><br />
+            orders@001.com.mx
+          </p>
+        </div>
+      )}
+
       {error && <div style={{ color: 'var(--danger)', padding: 24 }}>{error}</div>}
+
       {invoice && (
         <>
           {invoice.pay_status === 'paid' ? (

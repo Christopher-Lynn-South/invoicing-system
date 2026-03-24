@@ -67,6 +67,7 @@ export default function App() {
       <Routes>
         {/* Public routes */}
         <Route path="/login" element={<Login />} />
+        <Route path="/pay/t/:token" element={<PayPage />} />
         <Route path="/pay/:invoiceId" element={<PayPage />} />
 
         {/* Patient portal */}

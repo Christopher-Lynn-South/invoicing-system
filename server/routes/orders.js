@@ -8,9 +8,12 @@ const { eq, desc, and, inArray, sql } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { validate, orderSchema, shipSchema } = require('../middleware/validate');
 const fedexService = require('../services/fedex');
-const { sendShippingNotification } = require('../services/mailer');
-const { sendInvoiceEmail } = require('../services/mailer');
+const crypto = require('crypto');
+const { sendShippingNotification, sendInvoiceEmail } = require('../services/mailer');
 const { sendInvoiceSMS, sendShippingSMS } = require('../services/sms');
+
+function generatePayToken() { return crypto.randomBytes(32).toString('hex'); }
+function payTokenExpiresAt(days = 3) { const d = new Date(); d.setDate(d.getDate() + days); return d; }
 const { generateInvoicePDF } = require('../services/pdf');
 const path = require('path');
 const fs = require('fs');
@@ -316,8 +319,14 @@ router.post('/:id/resend-invoice', requireLogin, async (req, res) => {
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
     if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
 
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.order_id, order.id));
-    if (!invoice) return res.status(404).json({ error: 'NO_INVOICE', message: 'No invoice exists for this order.' });
+    const existing = await db.select().from(invoices).where(eq(invoices.order_id, order.id));
+    if (!existing.length) return res.status(404).json({ error: 'NO_INVOICE', message: 'No invoice exists for this order.' });
+
+    // Regenerate token — gives patient a fresh 3-day window from now
+    const [invoice] = await db.update(invoices)
+      .set({ pay_token: generatePayToken(), pay_token_expires_at: payTokenExpiresAt(3) })
+      .where(eq(invoices.order_id, order.id))
+      .returning();
 
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
 
