@@ -257,6 +257,16 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
 
     return res.json(shipment);
   } catch (err) {
+    if (err.response) {
+      // FedEx returned an error — log the full body so we can see the exact reason
+      console.error('FedEx API error status:', err.response.status);
+      console.error('FedEx API error body:', JSON.stringify(err.response.data, null, 2));
+      return res.status(502).json({
+        error: 'FEDEX_ERROR',
+        status: err.response.status,
+        details: err.response.data,
+      });
+    }
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }
