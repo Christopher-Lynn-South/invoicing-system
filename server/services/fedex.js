@@ -32,20 +32,31 @@ async function getAccessToken() {
   return tokenCache.token;
 }
 
-async function createShipment({ service_type, weight_lbs, dimensions, recipient }) {
+async function createShipment({ service_type, box_type, weight_lbs, recipient }) {
   const token = await getAccessToken();
+
+  // Build shipper address from company settings (fall back to env defaults)
+  const shipperName    = process.env.COMPANY_NAME || 'Sender';
+  const shipperStreet  = process.env.COMPANY_ADDRESS_1 || '';
+  const shipperStreet2 = process.env.COMPANY_ADDRESS_2 || '';
+  const shipperCity    = process.env.COMPANY_CITY || '';
+  const shipperState   = process.env.COMPANY_STATE || '';
+  const shipperZip     = process.env.COMPANY_ZIP || '';
+  const shipperCountry = process.env.COMPANY_COUNTRY || 'US';
+
+  const streetLines = [shipperStreet, shipperStreet2].filter(Boolean);
 
   const payload = {
     labelResponseOptions: 'URL_ONLY',
     requestedShipment: {
       shipper: {
-        contact: { companyName: 'Corp 001 Inc.' },
+        contact: { companyName: shipperName },
         address: {
-          streetLines: ['Av. Reforma 123'],
-          city: 'Tijuana',
-          stateOrProvinceCode: 'BC',
-          postalCode: '22710',
-          countryCode: 'MX',
+          streetLines: streetLines.length ? streetLines : ['123 Main St'],
+          city: shipperCity || 'Unknown',
+          stateOrProvinceCode: shipperState || 'CA',
+          postalCode: shipperZip || '00000',
+          countryCode: shipperCountry,
         },
       },
       recipients: [
@@ -56,12 +67,12 @@ async function createShipment({ service_type, weight_lbs, dimensions, recipient 
             city: recipient.city,
             stateOrProvinceCode: recipient.state,
             postalCode: recipient.zip,
-            countryCode: recipient.country || 'MX',
+            countryCode: recipient.country || 'US',
           },
         },
       ],
       serviceType: service_type,
-      packagingType: 'YOUR_PACKAGING',
+      packagingType: box_type,          // FEDEX_LARGE_BOX or FEDEX_EXTRA_LARGE_BOX
       pickupType: 'USE_SCHEDULED_PICKUP',
       shippingChargesPayment: {
         paymentType: 'SENDER',
@@ -73,13 +84,8 @@ async function createShipment({ service_type, weight_lbs, dimensions, recipient 
       },
       requestedPackageLineItems: [
         {
+          // No dimensions block — FedEx knows the dimensions of its own boxes
           weight: { units: 'LB', value: weight_lbs },
-          dimensions: {
-            units: 'IN',
-            length: dimensions.length,
-            width: dimensions.width,
-            height: dimensions.height,
-          },
         },
       ],
     },

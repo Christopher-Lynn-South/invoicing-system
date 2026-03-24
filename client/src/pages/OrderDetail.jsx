@@ -31,7 +31,7 @@ export default function OrderDetail() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [shipModal, setShipModal] = useState(false);
-  const [shipForm, setShipForm] = useState({ service: 'FEDEX_GROUND', weight_lbs: '', dimensions: { length: '', width: '', height: '' } });
+  const [shipForm, setShipForm] = useState({ service: 'FEDEX_GROUND', box_type: 'FEDEX_LARGE_BOX', weight_lbs: '' });
   const [shipping, setShipping] = useState(false);
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [resendingInvoice, setResendingInvoice] = useState(false);
@@ -65,12 +65,8 @@ export default function OrderDetail() {
     try {
       await api.post(`/orders/${id}/ship`, {
         service: shipForm.service,
+        box_type: shipForm.box_type,
         weight_lbs: parseFloat(shipForm.weight_lbs),
-        dimensions: {
-          length: parseFloat(shipForm.dimensions.length),
-          width: parseFloat(shipForm.dimensions.width),
-          height: parseFloat(shipForm.dimensions.height),
-        },
       });
       addToast('Shipping label created!', 'success');
       setShipModal(false);
@@ -374,20 +370,16 @@ export default function OrderDetail() {
             </select>
           </div>
           <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Box Type</label>
+            <select value={shipForm.box_type} onChange={e => setShipForm({ ...shipForm, box_type: e.target.value })} style={{ width: '100%' }}>
+              <option value="FEDEX_LARGE_BOX">FedEx Large Box</option>
+              <option value="FEDEX_EXTRA_LARGE_BOX">FedEx Extra Large Box</option>
+            </select>
+          </div>
+          <div style={{ marginBottom: 20 }}>
             <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Weight (lbs)</label>
             <input type="number" step="0.01" min="0.1" required value={shipForm.weight_lbs}
               onChange={e => setShipForm({ ...shipForm, weight_lbs: e.target.value })} style={{ width: '100%' }} />
-          </div>
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Dimensions (in)</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-              {['length', 'width', 'height'].map(dim => (
-                <input key={dim} type="number" step="0.1" min="0.1" placeholder={dim} required
-                  value={shipForm.dimensions[dim]}
-                  onChange={e => setShipForm({ ...shipForm, dimensions: { ...shipForm.dimensions, [dim]: e.target.value } })}
-                />
-              ))}
-            </div>
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button type="button" onClick={() => setShipModal(false)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>

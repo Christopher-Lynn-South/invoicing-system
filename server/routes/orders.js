@@ -205,20 +205,20 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
     }
 
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
-    const { service, weight_lbs, dimensions, recipient_name, recipient_street,
+    const { service, box_type, weight_lbs, recipient_name, recipient_street,
       recipient_city, recipient_state, recipient_zip, recipient_country } = req.validated;
 
     const labelResult = await fedexService.createShipment({
       service_type: service,
+      box_type,
       weight_lbs,
-      dimensions,
       recipient: {
         name: recipient_name || patient.name,
         street: recipient_street || patient.billing_address?.street || '',
         city: recipient_city || patient.billing_address?.city || '',
         state: recipient_state || patient.billing_address?.state || '',
         zip: recipient_zip || patient.billing_address?.zip || '',
-        country: recipient_country || patient.billing_address?.country || 'MX',
+        country: recipient_country || patient.billing_address?.country || 'US',
       },
     });
 
@@ -235,7 +235,7 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
       fedex_tracking_number: labelResult.trackingNumber,
       service_type: service,
       weight_lbs: weight_lbs.toString(),
-      dimensions_json: dimensions,
+      dimensions_json: { box_type },   // store box type in the existing JSON column
       label_pdf_url: `/uploads/labels/${order.id}.pdf`,
       ship_date: new Date().toISOString().split('T')[0],
       estimated_delivery: labelResult.estimatedDelivery || null,
