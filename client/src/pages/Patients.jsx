@@ -10,7 +10,7 @@ export default function Patients() {
   const fetchPatients = useOrderStore(s => s.fetchPatients);
   const addToast = useOrderStore(s => s.addToast);
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', date_of_birth: '', billing_address: { street: '', city: '', state: '', zip: '', country: 'MX' } });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', date_of_birth: '', billing_address: { street: '', city: '', state: '', zip: '', country: 'US' } });
 
   useEffect(() => { fetchPatients(); }, []);
 
