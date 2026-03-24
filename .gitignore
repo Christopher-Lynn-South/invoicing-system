@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.local
+dist/
+client/dist/
+uploads/
+logs/
+import/zoho/*.csv
+import/reports/
+/var/orderflow/
+*.log
+.DS_Store
+drizzle/
+server/db/migrations/*.sql

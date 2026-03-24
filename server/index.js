@@ -1,0 +1,97 @@
+require('dotenv').config();
+const express = require('express');
+const session = require('express-session');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// ─── Stripe webhook needs raw body BEFORE json parser ────────────────────────
+const paymentsRouter = require('./routes/payments');
+app.use('/api/webhooks/stripe', paymentsRouter);
+
+// ─── Body parsers ─────────────────────────────────────────────────────────────
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production'
+    ? process.env.BASE_URL
+    : ['http://localhost:5173', 'http://localhost:3001'],
+  credentials: true,
+}));
+
+// ─── Session ──────────────────────────────────────────────────────────────────
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: 'lax',
+  },
+}));
+
+// ─── Static files ─────────────────────────────────────────────────────────────
+// Serve uploaded invoices and labels
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/patients', require('./routes/patients'));
+app.use('/api/products', require('./routes/products'));
+app.use('/api/orders', require('./routes/orders'));
+app.use('/api', require('./routes/invoices'));          // mounts /api/orders/:id/invoice and /api/invoices/:id
+app.use('/api/pay', require('./routes/payments'));
+app.use('/api/reminders', require('./routes/reminders'));
+app.use('/reorder', require('./routes/reminders'));
+
+// ─── Health checks ────────────────────────────────────────────────────────────
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/health/email', async (req, res) => {
+  const { transporter } = require('./services/mailer');
+  try {
+    await transporter.verify();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+// ─── Serve React SPA ─────────────────────────────────────────────────────────
+const clientDist = path.join(__dirname, '../client/dist');
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist));
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(path.join(clientDist, 'index.html'));
+    }
+  });
+}
+
+// ─── Error handler ────────────────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+});
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+app.listen(PORT, () => {
+  console.log(`OrderFlow server running on port ${PORT}`);
+});
+
+// ─── Cron jobs ────────────────────────────────────────────────────────────────
+if (process.env.NODE_ENV !== 'test') {
+  require('./jobs/reminders.cron').start();
+  require('./jobs/tracking.cron').start();
+}
+
+module.exports = app;
