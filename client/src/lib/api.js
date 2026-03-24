@@ -8,7 +8,8 @@ const api = axios.create({
 api.interceptors.response.use(
   res => res,
   err => {
-    if (err.response?.status === 401) {
+    const onLoginPage = ['/login', '/patient/login'].includes(window.location.pathname);
+    if (err.response?.status === 401 && !onLoginPage) {
       window.location.href = '/login';
     }
     return Promise.reject(err);
