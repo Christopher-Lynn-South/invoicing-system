@@ -263,13 +263,29 @@ const SECTIONS = [
     ],
   },
   {
+    key: 'business',
+    title: 'Business Info',
+    icon: '🏢',
+    fields: [
+      { name: 'COMPANY_NAME', label: 'Company / Legal Name', hint: 'Appears on invoice PDFs, emails, and SMS messages' },
+      { name: 'COMPANY_DBA', label: 'DBA (Doing Business As)', hint: 'Optional — shown as "d/b/a …" under the legal name on invoices' },
+      { name: 'COMPANY_ADDRESS_1', label: 'Address Line 1', hint: 'Street address' },
+      { name: 'COMPANY_ADDRESS_2', label: 'Address Line 2', hint: 'Suite, unit, PO Box, etc. (optional)' },
+      { name: 'COMPANY_CITY', label: 'City' },
+      { name: 'COMPANY_STATE', label: 'State / Province' },
+      { name: 'COMPANY_ZIP', label: 'ZIP / Postal Code' },
+      { name: 'COMPANY_COUNTRY', label: 'Country', hint: 'Optional — e.g. USA, Mexico' },
+      { name: 'COMPANY_PHONE', label: 'Phone Number', hint: 'Main business phone shown on invoices' },
+      { name: 'COMPANY_FAX', label: 'Fax Number', hint: 'Optional' },
+      { name: 'COMPANY_EMAIL', label: 'Billing / Support Email', hint: 'Contact email shown on invoice PDFs and email footers' },
+    ],
+  },
+  {
     key: 'app',
     title: 'App',
     icon: '⚙️',
     fields: [
       { name: 'BASE_URL', label: 'Base URL', hint: 'e.g. https://orders.your-domain.com — used in email/SMS payment links and PDFs. No trailing slash.' },
-      { name: 'COMPANY_NAME', label: 'Company Name', hint: 'Appears in email footers, SMS messages, and invoice PDFs' },
-      { name: 'COMPANY_EMAIL', label: 'Company Email', hint: 'Support/billing contact shown in email footers and invoice PDFs' },
     ],
   },
 ];

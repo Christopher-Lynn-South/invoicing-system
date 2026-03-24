@@ -13,11 +13,36 @@ async function generateInvoicePDF({ invoice, order, patient, items }, outputPath
 
     // ─── Header ────────────────────────────────────────────────────────────────
     const companyName = process.env.COMPANY_NAME || 'OrderFlow';
+    const companyDba  = process.env.COMPANY_DBA || '';
     const companyEmail = process.env.COMPANY_EMAIL || process.env.MAIL_USER || '';
-    const baseUrl = process.env.BASE_URL || '';
+    const companyPhone = process.env.COMPANY_PHONE || '';
+    const companyFax   = process.env.COMPANY_FAX || '';
+    const addr1        = process.env.COMPANY_ADDRESS_1 || '';
+    const addr2        = process.env.COMPANY_ADDRESS_2 || '';
+    const cityLine     = [process.env.COMPANY_CITY, process.env.COMPANY_STATE, process.env.COMPANY_ZIP].filter(Boolean).join(', ');
+    const countryLine  = process.env.COMPANY_COUNTRY || '';
+    const baseUrl      = process.env.BASE_URL || '';
+
+    // Company name (and optional DBA)
     doc.fontSize(22).fillColor(BRAND_COLOR).font('Helvetica-Bold').text(companyName, 50, 50);
-    const headerContact = [companyEmail, baseUrl].filter(Boolean).join('  ·  ');
-    doc.fontSize(10).fillColor(GRAY).font('Helvetica').text(headerContact, 50, 76);
+    let headerY = 76;
+    if (companyDba) {
+      doc.fontSize(10).fillColor(GRAY).font('Helvetica-Oblique').text(`d/b/a ${companyDba}`, 50, headerY);
+      headerY += 14;
+    }
+    // Address lines
+    if (addr1) { doc.fontSize(10).fillColor(GRAY).font('Helvetica').text(addr1, 50, headerY); headerY += 13; }
+    if (addr2) { doc.fontSize(10).fillColor(GRAY).font('Helvetica').text(addr2, 50, headerY); headerY += 13; }
+    if (cityLine) { doc.fontSize(10).fillColor(GRAY).font('Helvetica').text(cityLine, 50, headerY); headerY += 13; }
+    if (countryLine) { doc.fontSize(10).fillColor(GRAY).font('Helvetica').text(countryLine, 50, headerY); headerY += 13; }
+    // Phone / fax / email
+    const contactParts = [];
+    if (companyPhone) contactParts.push(`Tel: ${companyPhone}`);
+    if (companyFax)   contactParts.push(`Fax: ${companyFax}`);
+    if (companyEmail) contactParts.push(companyEmail);
+    if (contactParts.length) {
+      doc.fontSize(10).fillColor(GRAY).font('Helvetica').text(contactParts.join('  ·  '), 50, headerY);
+    }
 
     doc.fontSize(28).fillColor(DARK).font('Helvetica-Bold').text('INVOICE', 400, 50, { align: 'right' });
     doc.fontSize(11).fillColor(GRAY).font('Helvetica');

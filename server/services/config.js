@@ -25,6 +25,17 @@ const MANAGED_KEYS = [
   'FEDEX_ACCOUNT_NUMBER',
   'FEDEX_SANDBOX',
   'BASE_URL',
+  'COMPANY_NAME',
+  'COMPANY_EMAIL',
+  'COMPANY_DBA',
+  'COMPANY_PHONE',
+  'COMPANY_FAX',
+  'COMPANY_ADDRESS_1',
+  'COMPANY_ADDRESS_2',
+  'COMPANY_CITY',
+  'COMPANY_STATE',
+  'COMPANY_ZIP',
+  'COMPANY_COUNTRY',
 ];
 
 // Keys whose display values are masked in API responses
