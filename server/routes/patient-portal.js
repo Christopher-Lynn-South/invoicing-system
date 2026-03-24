@@ -24,7 +24,7 @@ router.get('/profile', async (req, res) => {
         date_of_birth: patients.date_of_birth,
       })
       .from(patients)
-      .where(eq(patients.id, req.session.patientId))
+      .where(eq(patients.id, req.session.customerId))
       .limit(1);
     return res.json(patient);
   } catch (err) {
@@ -39,7 +39,7 @@ router.get('/orders', async (req, res) => {
     const orders = await db
       .select()
       .from(sales_orders)
-      .where(eq(sales_orders.patient_id, req.session.patientId))
+      .where(eq(sales_orders.patient_id, req.session.customerId))
       .orderBy(desc(sales_orders.created_at));
     return res.json(orders);
   } catch (err) {
@@ -68,7 +68,7 @@ router.get('/invoices', async (req, res) => {
       })
       .from(invoices)
       .innerJoin(sales_orders, eq(invoices.order_id, sales_orders.id))
-      .where(eq(sales_orders.patient_id, req.session.patientId))
+      .where(eq(sales_orders.patient_id, req.session.customerId))
       .orderBy(desc(invoices.created_at));
     return res.json(rows);
   } catch (err) {
@@ -107,7 +107,7 @@ router.get('/invoices/:id', async (req, res) => {
     // Ownership check
     const [order] = await db.select({ patient_id: sales_orders.patient_id })
       .from(sales_orders).where(eq(sales_orders.id, row.order_id)).limit(1);
-    if (!order || order.patient_id !== req.session.patientId) {
+    if (!order || order.patient_id !== req.session.customerId) {
       return res.status(403).json({ error: 'FORBIDDEN' });
     }
 
@@ -147,7 +147,7 @@ router.get('/shipments', async (req, res) => {
       })
       .from(shipments)
       .innerJoin(sales_orders, eq(shipments.order_id, sales_orders.id))
-      .where(eq(sales_orders.patient_id, req.session.patientId))
+      .where(eq(sales_orders.patient_id, req.session.customerId))
       .orderBy(desc(shipments.created_at));
     return res.json(rows);
   } catch (err) {

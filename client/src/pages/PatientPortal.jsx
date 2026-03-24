@@ -42,8 +42,8 @@ export default function PatientPortal() {
 
   useEffect(() => {
     Promise.all([
-      api.get('/patient/invoices'),
-      api.get('/patient/shipments'),
+      api.get('/customer/invoices'),
+      api.get('/customer/shipments'),
     ]).then(([inv, ship]) => {
       setInvoices(inv.data);
       setShipments(ship.data);
@@ -51,16 +51,16 @@ export default function PatientPortal() {
   }, []);
 
   async function handleLogout() {
-    await api.post('/patient/logout');
+    await api.post('/customer/logout');
     setPatientUser(null);
-    navigate('/patient/login');
+    navigate('/customer/login');
   }
 
   async function handleChangePassword(e) {
     e.preventDefault();
     setCpMsg(''); setCpError('');
     try {
-      await api.post('/patient/change-password', { current_password: cpCurrent, new_password: cpNew });
+      await api.post('/customer/change-password', { current_password: cpCurrent, new_password: cpNew });
       setCpMsg('Password updated successfully.');
       setCpCurrent(''); setCpNew('');
     } catch (err) {
@@ -79,7 +79,7 @@ export default function PatientPortal() {
       {/* Header */}
       <div style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <span style={{ fontFamily: 'var(--brand-serif)', fontSize: 20 }}>🌊 Patient Portal</span>
+          <span style={{ fontFamily: 'var(--brand-serif)', fontSize: 20 }}>🌊 Customer Portal</span>
           <span style={{ marginLeft: 16, color: 'var(--text-muted)', fontSize: 13 }}>Welcome, {patientUser?.name}</span>
         </div>
         <button onClick={handleLogout} style={{ fontSize: 13, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>

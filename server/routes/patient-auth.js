@@ -33,9 +33,9 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' });
     }
 
-    req.session.patientId    = patient.id;
-    req.session.patientEmail = patient.email;
-    req.session.patientName  = patient.name;
+    req.session.customerId    = patient.id;
+    req.session.customerEmail = patient.email;
+    req.session.customerName  = patient.name;
 
     return res.json({ ok: true, name: patient.name, email: patient.email });
   } catch (err) {
@@ -54,14 +54,14 @@ router.post('/logout', (req, res) => {
 
 // ─── GET /api/patient/me ──────────────────────────────────────────────────────
 router.get('/me', (req, res) => {
-  if (!req.session.patientId) {
+  if (!req.session.customerId) {
     return res.status(401).json({ authenticated: false });
   }
   return res.json({
     authenticated: true,
-    id: req.session.patientId,
-    email: req.session.patientEmail,
-    name: req.session.patientName,
+    id: req.session.customerId,
+    email: req.session.customerEmail,
+    name: req.session.customerName,
   });
 });
 
@@ -76,7 +76,7 @@ router.post('/change-password', requirePatientLogin, async (req, res) => {
   }
 
   try {
-    const [patient] = await db.select().from(patients).where(eq(patients.id, req.session.patientId)).limit(1);
+    const [patient] = await db.select().from(patients).where(eq(patients.id, req.session.customerId)).limit(1);
     const valid = await bcrypt.compare(current_password, patient.password_hash);
     if (!valid) return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Current password incorrect.' });
 
@@ -106,13 +106,13 @@ router.post('/grant-access/:patientId', requireLogin, async (req, res) => {
       .where(eq(patients.id, patient.id));
 
     // Send welcome email with credentials
-    const portalUrl = `${process.env.BASE_URL}/patient/login`;
+    const portalUrl = `${process.env.BASE_URL}/customer/login`;
     await sendMail({
       to: patient.email,
-      subject: 'Your OrderFlow Patient Portal Access',
+      subject: 'Your OrderFlow Customer Portal Access',
       html: `
         <p>Hello ${patient.name},</p>
-        <p>Your patient portal access has been set up. You can log in to view your orders, invoices, and make payments.</p>
+        <p>Your customer portal access has been set up. You can log in to view your orders, invoices, and make payments.</p>
         <p><strong>Portal:</strong> <a href="${portalUrl}">${portalUrl}</a><br>
         <strong>Email:</strong> ${patient.email}<br>
         <strong>Temporary password:</strong> <code>${tempPassword}</code></p>

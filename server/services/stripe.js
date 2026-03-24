@@ -28,7 +28,7 @@ const stripe = new Proxy({}, { get: (_, prop) => getStripe()[prop] });
  * Do NOT add email, DOB, prescription data, or patient UUID.
  * Policy: Section 18 of OrderFlow spec.
  */
-function buildStripePatientPayload(patient) {
+function buildStripeCustomerPayload(patient) {
   const addr = patient.billing_address || {};
   const payload = {
     name: patient.name,
@@ -48,14 +48,14 @@ async function getOrCreateStripeCustomer(patient) {
   if (patient.stripe_customer_id) {
     return stripe.customers.update(
       patient.stripe_customer_id,
-      buildStripePatientPayload(patient)
+      buildStripeCustomerPayload(patient)
     );
   }
-  const sc = await stripe.customers.create(buildStripePatientPayload(patient));
+  const sc = await stripe.customers.create(buildStripeCustomerPayload(patient));
   await db.update(patients)
     .set({ stripe_customer_id: sc.id })
     .where(eq(patients.id, patient.id));
   return sc;
 }
 
-module.exports = { stripe, buildStripePatientPayload, getOrCreateStripeCustomer };
+module.exports = { stripe, buildStripeCustomerPayload, getOrCreateStripeCustomer };

@@ -29,7 +29,7 @@ function RequireAuth({ children }) {
 function RequirePatientAuth({ children }) {
   const patientUser = useOrderStore(s => s.patientUser);
   if (patientUser === undefined) return null;
-  if (!patientUser) return <Navigate to="/patient/login" replace />;
+  if (!patientUser) return <Navigate to="/customer/login" replace />;
   return children;
 }
 
@@ -47,7 +47,7 @@ export default function App() {
         setUser(res.data.authenticated ? res.data : null);
       }).catch(() => setUser(null)),
 
-      api.get('/patient/me').then(res => {
+      api.get('/customer/me').then(res => {
         setPatientUser(res.data.authenticated ? res.data : null);
       }).catch(() => setPatientUser(null)),
     ]).finally(() => setAuthChecked(true));
@@ -71,8 +71,8 @@ export default function App() {
         <Route path="/pay/:invoiceId" element={<PayPage />} />
 
         {/* Patient portal */}
-        <Route path="/patient/login" element={<PatientLogin />} />
-        <Route path="/patient/portal" element={<RequirePatientAuth><PatientPortal /></RequirePatientAuth>} />
+        <Route path="/customer/login" element={<PatientLogin />} />
+        <Route path="/customer/portal" element={<RequirePatientAuth><PatientPortal /></RequirePatientAuth>} />
 
         {/* Admin / staff routes */}
         <Route path="/" element={<RequireAuth><Layout /></RequireAuth>}>

@@ -15,9 +15,9 @@ export default function PatientLogin() {
     e.preventDefault();
     setLoading(true); setError('');
     try {
-      const res = await api.post('/patient/login', { email, password });
+      const res = await api.post('/customer/login', { email, password });
       setPatientUser(res.data);
-      navigate('/patient/portal');
+      navigate('/customer/portal');
     } catch (err) {
       setError(err.response?.data?.message || 'Invalid credentials or portal access not enabled.');
       setLoading(false);
@@ -35,7 +35,7 @@ export default function PatientLogin() {
       }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🌊</div>
-          <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 24, color: 'var(--text-primary)' }}>Patient Portal</h1>
+          <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 24, color: 'var(--text-primary)' }}>Customer Portal</h1>
           <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>Corp 001 Inc. — View your orders & invoices</p>
         </div>
         <form onSubmit={handleSubmit}>

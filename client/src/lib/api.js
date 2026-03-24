@@ -11,7 +11,7 @@ api.interceptors.response.use(
     const path = window.location.pathname;
     const isPublicPage = path.startsWith('/pay/') ||
       path === '/login' ||
-      path === '/patient/login';
+      path === '/customer/login';
     if (err.response?.status === 401 && !isPublicPage) {
       window.location.href = '/login';
     }

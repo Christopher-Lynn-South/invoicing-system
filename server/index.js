@@ -72,11 +72,11 @@ loadSettings(); // non-blocking; falls back to .env values on DB error
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth/login', authLimiter);
-app.use('/api/patient/login', authLimiter);
+app.use('/api/customer/login', authLimiter);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/settings', require('./routes/settings'));
-app.use('/api/patient', require('./routes/patient-auth'));
-app.use('/api/patient', require('./routes/patient-portal'));
+app.use('/api/customer', require('./routes/patient-auth'));
+app.use('/api/customer', require('./routes/patient-portal'));
 app.use('/api/patients', require('./routes/patients'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/orders', require('./routes/orders'));

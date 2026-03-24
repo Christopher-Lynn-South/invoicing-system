@@ -20,11 +20,11 @@ function requireRole(role) {
   };
 }
 
-// ─── Patient portal auth ──────────────────────────────────────────────────────
+// ─── Customer portal auth ─────────────────────────────────────────────────────
 
 function requirePatientLogin(req, res, next) {
-  if (!req.session || !req.session.patientId) {
-    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Patient login required.' });
+  if (!req.session || !req.session.customerId) {
+    return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Login required.' });
   }
   next();
 }

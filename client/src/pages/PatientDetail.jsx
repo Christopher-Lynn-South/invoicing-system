@@ -35,8 +35,8 @@ export default function PatientDetail() {
 
   async function grantPortalAccess() {
     try {
-      await api.post(`/patient/grant-access/${id}`);
-      addToast('Portal access granted — credentials emailed to patient.', 'success');
+      await api.post(`/customer/grant-access/${id}`);
+      addToast('Portal access granted — credentials emailed to customer.', 'success');
       load();
     } catch (err) {
       addToast(err.response?.data?.message || 'Failed to grant access.', 'error');
@@ -46,7 +46,7 @@ export default function PatientDetail() {
   async function revokePortalAccess() {
     if (!window.confirm('Revoke this patient\'s portal access?')) return;
     try {
-      await api.post(`/patient/revoke-access/${id}`);
+      await api.post(`/customer/revoke-access/${id}`);
       addToast('Portal access revoked.', 'success');
       load();
     } catch (err) {
