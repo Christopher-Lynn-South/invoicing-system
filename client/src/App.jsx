@@ -13,6 +13,7 @@ import Dashboard from './pages/Dashboard';
 import Orders from './pages/Orders';
 import OrderDetail from './pages/OrderDetail';
 import Invoices from './pages/Invoices';
+import InvoiceDetail from './pages/InvoiceDetail';
 import Reminders from './pages/Reminders';
 import Patients from './pages/Patients';
 import PatientDetail from './pages/PatientDetail';
@@ -82,6 +83,7 @@ export default function App() {
           <Route path="orders" element={<Orders />} />
           <Route path="orders/:id" element={<OrderDetail />} />
           <Route path="invoices" element={<Invoices />} />
+          <Route path="invoices/:id" element={<InvoiceDetail />} />
           <Route path="reminders" element={<Reminders />} />
           <Route path="patients" element={<Patients />} />
           <Route path="patients/:id" element={<PatientDetail />} />

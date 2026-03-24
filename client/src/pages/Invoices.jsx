@@ -51,10 +51,10 @@ export default function Invoices() {
             ) : invoices.map(inv => (
               <tr key={inv.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '12px 16px' }}>
-                  <a href={`/api/invoices/${inv.id}/pdf`} target="_blank" rel="noreferrer"
-                    style={{ fontFamily: 'var(--brand-mono)', fontSize: 12, color: 'var(--accent)' }}>
+                  <Link to={`/invoices/${inv.id}`}
+                    style={{ fontFamily: 'var(--brand-mono)', fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
                     {inv.invoice_number}
-                  </a>
+                  </Link>
                 </td>
                 <td style={{ padding: '12px 16px', fontFamily: 'var(--brand-mono)', fontSize: 12 }}>
                   {inv.order_number}

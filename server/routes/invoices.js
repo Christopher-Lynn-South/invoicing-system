@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const { db } = require('../db');
-const { invoices, sales_orders, order_items, products, patients } = require('../db/schema');
+const { invoices, sales_orders, order_items, products, patients, shipments } = require('../db/schema');
 const { eq, sql } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { generateInvoicePDF } = require('../services/pdf');
@@ -180,6 +180,38 @@ router.get('/invoices/by-token/:token', async (req, res) => {
   }
 });
 
+// GET /api/invoices/:id/detail  (admin — full detail with shipment)
+router.get('/invoices/:id/detail', requireLogin, async (req, res) => {
+  try {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+    if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+    const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+    const items = await db.select({
+      item: order_items,
+      product_name: products.name,
+      product_sku: products.sku,
+    })
+      .from(order_items)
+      .leftJoin(products, eq(order_items.product_id, products.id))
+      .where(eq(order_items.order_id, order.id));
+
+    const [shipment] = await db.select().from(shipments).where(eq(shipments.order_id, order.id)).limit(1);
+
+    return res.json({
+      ...invoice,
+      order,
+      patient,
+      items: items.map(r => ({ ...r.item, product_name: r.product_name, product_sku: r.product_sku })),
+      shipment: shipment || null,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
 // GET /api/invoices/:id  (PUBLIC — no auth required)
 router.get('/invoices/:id', async (req, res) => {
   try {
@@ -213,6 +245,48 @@ router.get('/invoices/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// PATCH /api/invoices/:id  — admin update pay_status (and sync order status)
+router.patch('/invoices/:id', requireLogin, async (req, res) => {
+  try {
+    const { pay_status, notes } = req.body;
+    const VALID_STATUSES = ['pending', 'paid', 'failed', 'waived'];
+
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+    if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const updates = {};
+    if (pay_status !== undefined) {
+      if (!VALID_STATUSES.includes(pay_status)) {
+        return res.status(400).json({ error: 'INVALID_STATUS', message: `pay_status must be one of: ${VALID_STATUSES.join(', ')}` });
+      }
+      updates.pay_status = pay_status;
+      if (pay_status === 'paid' && !invoice.paid_at) {
+        updates.paid_at = new Date();
+      } else if (pay_status !== 'paid') {
+        updates.paid_at = null;
+      }
+    }
+
+    const [updated] = await db.update(invoices)
+      .set(updates)
+      .where(eq(invoices.id, invoice.id))
+      .returning();
+
+    // Sync sales order status when payment status changes
+    if (pay_status !== undefined) {
+      const orderStatus = pay_status === 'paid' ? 'paid' : 'pending_payment';
+      await db.update(sales_orders)
+        .set({ status: orderStatus, updated_at: new Date() })
+        .where(eq(sales_orders.id, invoice.order_id));
+    }
+
+    return res.json(updated);
+  } catch (err) {
+    console.error('Invoice PATCH error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }
 });
 
