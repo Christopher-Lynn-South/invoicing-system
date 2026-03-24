@@ -1,10 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const connectPgSimple = require('connect-pg-simple');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const rateLimit = require('express-rate-limit');
+const { pool } = require('./db');
 
 // ─── Auth rate limiters ───────────────────────────────────────────────────────
 const authLimiter = rateLimit({
@@ -15,8 +17,13 @@ const authLimiter = rateLimit({
   message: { error: 'TOO_MANY_REQUESTS', message: 'Too many login attempts. Try again in 15 minutes.' },
 });
 
+const PgSession = connectPgSimple(session);
+
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Trust Nginx reverse proxy so secure cookies work behind HTTPS
+app.set('trust proxy', 1);
 
 // ─── Stripe webhook needs raw body BEFORE json parser ────────────────────────
 const paymentsRouter = require('./routes/payments');
@@ -34,8 +41,9 @@ app.use(cors({
   credentials: true,
 }));
 
-// ─── Session ──────────────────────────────────────────────────────────────────
+// ─── Session (PostgreSQL-backed so sessions survive restarts) ─────────────────
 app.use(session({
+  store: new PgSession({ pool, tableName: 'sessions', createTableIfMissing: true }),
   secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
