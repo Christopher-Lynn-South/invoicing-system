@@ -391,9 +391,22 @@ export default function OrderDetail() {
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Service Type</label>
             <select value={shipForm.service} onChange={e => setShipForm({ ...shipForm, service: e.target.value })} style={{ width: '100%' }}>
-              <option value="FEDEX_GROUND">FedEx Ground</option>
-              <option value="FEDEX_EXPRESS_SAVER">FedEx Express Saver</option>
-              <option value="PRIORITY_OVERNIGHT">Priority Overnight</option>
+              <optgroup label="Ground">
+                <option value="FEDEX_GROUND">FedEx Ground</option>
+                <option value="FEDEX_HOME_DELIVERY">FedEx Home Delivery</option>
+              </optgroup>
+              <optgroup label="Express">
+                <option value="FEDEX_EXPRESS_SAVER">FedEx Express Saver (3-day)</option>
+                <option value="FEDEX_2_DAY">FedEx 2Day</option>
+                <option value="FEDEX_2_DAY_AM">FedEx 2Day AM</option>
+                <option value="STANDARD_OVERNIGHT">Standard Overnight</option>
+                <option value="PRIORITY_OVERNIGHT">Priority Overnight</option>
+                <option value="FIRST_OVERNIGHT">First Overnight</option>
+              </optgroup>
+              <optgroup label="International">
+                <option value="INTERNATIONAL_ECONOMY">International Economy</option>
+                <option value="INTERNATIONAL_PRIORITY">International Priority</option>
+              </optgroup>
             </select>
           </div>
           <div style={{ marginBottom: 16 }}>
