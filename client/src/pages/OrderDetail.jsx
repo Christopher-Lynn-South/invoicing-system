@@ -34,6 +34,8 @@ export default function OrderDetail() {
   const [shipForm, setShipForm] = useState({ service: 'FEDEX_GROUND', weight_lbs: '', dimensions: { length: '', width: '', height: '' } });
   const [shipping, setShipping] = useState(false);
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
+  const [resendingInvoice, setResendingInvoice] = useState(false);
+  const [resendingShipping, setResendingShipping] = useState(false);
 
   async function load() {
     try {
@@ -77,6 +79,34 @@ export default function OrderDetail() {
       addToast(err.response?.data?.message || 'Shipping failed', 'error');
     }
     setShipping(false);
+  }
+
+  async function resendInvoice() {
+    setResendingInvoice(true);
+    try {
+      const { data } = await api.post(`/orders/${id}/resend-invoice`);
+      const parts = ['Invoice resent'];
+      if (data.sent.email) parts.push('email ✓');
+      if (data.sent.sms) parts.push('SMS ✓');
+      addToast(parts.join(' · '), 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Resend failed', 'error');
+    }
+    setResendingInvoice(false);
+  }
+
+  async function resendShipping() {
+    setResendingShipping(true);
+    try {
+      const { data } = await api.post(`/orders/${id}/resend-shipping`);
+      const parts = ['Shipping notification resent'];
+      if (data.sent.email) parts.push('email ✓');
+      if (data.sent.sms) parts.push('SMS ✓');
+      addToast(parts.join(' · '), 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Resend failed', 'error');
+    }
+    setResendingShipping(false);
   }
 
   async function refreshTracking() {
@@ -201,7 +231,7 @@ export default function OrderDetail() {
                     <span>{order.invoice.pay_method.replace('_', ' ').toUpperCase()}</span>
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <a href={`/api/invoices/${order.invoice.id}/pdf`} target="_blank" rel="noreferrer" style={{
                     fontSize: 12, color: 'var(--accent)', border: '1px solid var(--accent)',
                     borderRadius: 6, padding: '4px 12px',
@@ -212,6 +242,13 @@ export default function OrderDetail() {
                       borderRadius: 6, padding: '4px 12px',
                     }}>Payment Portal →</a>
                   )}
+                  <button onClick={resendInvoice} disabled={resendingInvoice} style={{
+                    fontSize: 12, background: 'none', border: '1px solid var(--border)',
+                    color: 'var(--text-secondary)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer',
+                    opacity: resendingInvoice ? 0.6 : 1,
+                  }}>
+                    {resendingInvoice ? 'Sending…' : '↩ Resend Invoice'}
+                  </button>
                 </div>
               </div>
             )}
@@ -258,10 +295,19 @@ export default function OrderDetail() {
                     ⚠ Shipment exception detected
                   </div>
                 )}
-                <a href={`/api/orders/${id}/label`} target="_blank" rel="noreferrer" style={{
-                  fontSize: 12, color: 'var(--accent)', border: '1px solid var(--accent)',
-                  borderRadius: 6, padding: '4px 12px',
-                }}>Download Label PDF</a>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <a href={`/api/orders/${id}/label`} target="_blank" rel="noreferrer" style={{
+                    fontSize: 12, color: 'var(--accent)', border: '1px solid var(--accent)',
+                    borderRadius: 6, padding: '4px 12px',
+                  }}>Download Label PDF</a>
+                  <button onClick={resendShipping} disabled={resendingShipping} style={{
+                    fontSize: 12, background: 'none', border: '1px solid var(--border)',
+                    color: 'var(--text-secondary)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer',
+                    opacity: resendingShipping ? 0.6 : 1,
+                  }}>
+                    {resendingShipping ? 'Sending…' : '↩ Resend Shipping'}
+                  </button>
+                </div>
               </div>
             )}
           </div>
