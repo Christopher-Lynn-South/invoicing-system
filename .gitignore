@@ -11,4 +11,3 @@ import/reports/
 *.log
 .DS_Store
 drizzle/
-server/db/migrations/*.sql
