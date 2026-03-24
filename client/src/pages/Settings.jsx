@@ -253,13 +253,28 @@ const SECTIONS = [
   },
   {
     key: 'fedex',
-    title: 'FedEx Shipping',
+    title: 'FedEx API',
     icon: '📦',
     fields: [
       { name: 'FEDEX_CLIENT_ID', label: 'Client ID' },
       { name: 'FEDEX_CLIENT_SECRET', label: 'Client Secret', type: 'password' },
       { name: 'FEDEX_ACCOUNT_NUMBER', label: 'Account Number' },
       { name: 'FEDEX_SANDBOX', label: 'Use Sandbox', hint: 'true = test mode, false = live shipments' },
+    ],
+  },
+  {
+    key: 'fedex_shipper',
+    title: 'FedEx Ship From Address',
+    icon: '🏭',
+    fields: [
+      { name: 'FEDEX_SHIPPER_NAME', label: 'Company / Sender Name', hint: 'Name printed on labels as the shipper' },
+      { name: 'FEDEX_SHIPPER_PHONE', label: 'Phone Number', hint: 'Required by FedEx for the shipper contact' },
+      { name: 'FEDEX_SHIPPER_STREET', label: 'Street Address' },
+      { name: 'FEDEX_SHIPPER_STREET2', label: 'Street Line 2', hint: 'Suite, unit, etc. (optional)' },
+      { name: 'FEDEX_SHIPPER_CITY', label: 'City' },
+      { name: 'FEDEX_SHIPPER_STATE', label: 'State / Province Code', hint: 'e.g. CA, TX, BC' },
+      { name: 'FEDEX_SHIPPER_ZIP', label: 'ZIP / Postal Code' },
+      { name: 'FEDEX_SHIPPER_COUNTRY', label: 'Country Code', hint: 'e.g. US, MX, CA' },
     ],
   },
   {

@@ -35,14 +35,15 @@ async function getAccessToken() {
 async function createShipment({ service_type, box_type, weight_lbs, recipient }) {
   const token = await getAccessToken();
 
-  // Build shipper address from company settings (fall back to env defaults)
-  const shipperName    = process.env.COMPANY_NAME || 'Sender';
-  const shipperStreet  = process.env.COMPANY_ADDRESS_1 || '';
-  const shipperStreet2 = process.env.COMPANY_ADDRESS_2 || '';
-  const shipperCity    = process.env.COMPANY_CITY || '';
-  const shipperState   = process.env.COMPANY_STATE || '';
-  const shipperZip     = process.env.COMPANY_ZIP || '';
-  const shipperCountry = process.env.COMPANY_COUNTRY || 'US';
+  // Build shipper address from FedEx-specific ship-from settings
+  const shipperName    = process.env.FEDEX_SHIPPER_NAME || process.env.COMPANY_NAME || 'Sender';
+  const shipperPhone   = process.env.FEDEX_SHIPPER_PHONE || '';
+  const shipperStreet  = process.env.FEDEX_SHIPPER_STREET || '';
+  const shipperStreet2 = process.env.FEDEX_SHIPPER_STREET2 || '';
+  const shipperCity    = process.env.FEDEX_SHIPPER_CITY || '';
+  const shipperState   = process.env.FEDEX_SHIPPER_STATE || '';
+  const shipperZip     = process.env.FEDEX_SHIPPER_ZIP || '';
+  const shipperCountry = process.env.FEDEX_SHIPPER_COUNTRY || 'US';
 
   const streetLines = [shipperStreet, shipperStreet2].filter(Boolean);
 
@@ -50,7 +51,10 @@ async function createShipment({ service_type, box_type, weight_lbs, recipient })
     labelResponseOptions: 'URL_ONLY',
     requestedShipment: {
       shipper: {
-        contact: { companyName: shipperName },
+        contact: {
+          companyName: shipperName,
+          ...(shipperPhone && { phoneNumber: shipperPhone }),
+        },
         address: {
           streetLines: streetLines.length ? streetLines : ['123 Main St'],
           city: shipperCity || 'Unknown',
