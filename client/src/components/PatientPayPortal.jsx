@@ -87,9 +87,8 @@ function CardPayForm({ invoiceId, onSuccess }) {
   );
 }
 
-function ACHPayForm({ invoiceId, onSuccess }) {
+function ACHPayForm({ invoiceId, patient, onSuccess }) {
   const stripe = useStripe();
-  const elements = useElements();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -98,12 +97,41 @@ function ACHPayForm({ invoiceId, onSuccess }) {
     setLoading(true); setError('');
     try {
       const { data } = await axios.post(`/api/pay/${invoiceId}/intent`, { method: 'ach' });
-      // For ACH, instruct user payment will be confirmed via Stripe webhook
-      const result = await stripe.confirmUsBankAccountPayment(data.client_secret);
-      if (result.error) {
-        setError(result.error.message);
+
+      // Step 1: open Stripe Financial Connections to collect bank account
+      const collectResult = await stripe.collectBankAccountForPayment({
+        clientSecret: data.client_secret,
+        params: {
+          payment_method_type: 'us_bank_account',
+          payment_method_data: {
+            billing_details: {
+              name: patient?.name || '',
+              email: patient?.email || '',
+            },
+          },
+        },
+      });
+
+      if (collectResult.error) {
+        setError(collectResult.error.message);
+        setLoading(false);
+        return;
+      }
+
+      // User closed the modal without connecting
+      if (collectResult.paymentIntent.status === 'requires_payment_method') {
+        setError('No bank account was connected. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: confirm (shows mandate acceptance screen)
+      const confirmResult = await stripe.confirmUsBankAccountPayment(data.client_secret);
+      if (confirmResult.error) {
+        setError(confirmResult.error.message);
         setLoading(false);
       } else {
+        // ACH settles async — status will be processing, webhook marks it paid
         onSuccess();
       }
     } catch (err) {
@@ -305,7 +333,7 @@ export default function PatientPayPortal({ invoice }) {
       {stripe ? (
         <Elements stripe={stripe}>
           {method === 'stripe_cc' && <CardPayForm invoiceId={invoice.id} onSuccess={onSuccess} />}
-          {method === 'ach' && <ACHPayForm invoiceId={invoice.id} onSuccess={onSuccess} />}
+          {method === 'ach' && <ACHPayForm invoiceId={invoice.id} patient={invoice.patient} onSuccess={onSuccess} />}
         </Elements>
       ) : null}
       {method === 'usdc' && <USDCPayForm invoiceId={invoice.id} totalUSDC={total.toFixed(2)} onSuccess={onSuccess} />}
