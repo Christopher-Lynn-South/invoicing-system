@@ -1,6 +1,7 @@
 const twilio = require('twilio');
 
-const getBaseUrl = () => process.env.BASE_URL || 'https://orders.corp001.us';
+const getBaseUrl = () => process.env.BASE_URL || '';
+const getCompanyName = () => process.env.COMPANY_NAME || 'OrderFlow';
 
 function getClient() {
   const sid = process.env.TWILIO_ACCOUNT_SID;
@@ -49,7 +50,7 @@ async function sendInvoiceSMS(patient, invoice) {
   const payUrl = invoice.pay_token
     ? `${getBaseUrl()}/pay/t/${invoice.pay_token}`
     : `${getBaseUrl()}/pay/${invoice.id}`;
-  const body = `Corp 001: Invoice ${invoice.invoice_number} for $${parseFloat(invoice.total).toFixed(2)} USD is ready. Pay here: ${payUrl}`;
+  const body = `${getCompanyName()}: Invoice ${invoice.invoice_number} for $${parseFloat(invoice.total).toFixed(2)} USD is ready. Pay here: ${payUrl}`;
   try {
     return await sendSMS(patient.phone, body);
   } catch (err) {
@@ -61,7 +62,7 @@ async function sendInvoiceSMS(patient, invoice) {
 async function sendShippingSMS(patient, order, shipment) {
   if (!patient.phone) return false;
   const trackUrl = `https://www.fedex.com/fedextrack/?tracknumbers=${shipment.fedex_tracking_number}`;
-  const body = `Corp 001: Order ${order.order_number} has shipped via FedEx. Tracking: ${shipment.fedex_tracking_number} — ${trackUrl}`;
+  const body = `${getCompanyName()}: Order ${order.order_number} has shipped via FedEx. Tracking: ${shipment.fedex_tracking_number} — ${trackUrl}`;
   try {
     return await sendSMS(patient.phone, body);
   } catch (err) {

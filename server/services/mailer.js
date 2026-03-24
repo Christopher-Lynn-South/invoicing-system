@@ -62,8 +62,10 @@ async function getRecipients(patientId, patientEmail) {
   return { to: patientEmail, cc };
 }
 
-const getFrom = () => process.env.MAIL_FROM || '"OrderFlow" <orders@001.com.mx>';
-const getBaseUrl = () => process.env.BASE_URL || 'https://orders.corp001.us';
+const getFrom = () => process.env.MAIL_FROM || '';
+const getBaseUrl = () => process.env.BASE_URL || '';
+const getCompanyName = () => process.env.COMPANY_NAME || 'OrderFlow';
+const getCompanyEmail = () => process.env.COMPANY_EMAIL || process.env.MAIL_USER || '';
 
 function htmlWrap(body) {
   return `
@@ -90,7 +92,7 @@ async function sendInvoiceEmail(patient, order, invoice) {
     from: getFrom(),
     to,
     cc: cc.length ? cc : undefined,
-    subject: `Invoice ${invoice.invoice_number} from Corp 001 — $${parseFloat(invoice.total).toFixed(2)} due`,
+    subject: `Invoice ${invoice.invoice_number} from ${getCompanyName()} — $${parseFloat(invoice.total).toFixed(2)} due`,
     html: htmlWrap(`
       <h2>Invoice Ready</h2>
       <p>Dear ${patient.name},</p>
@@ -98,7 +100,7 @@ async function sendInvoiceEmail(patient, order, invoice) {
       <p><strong>Amount Due: $${parseFloat(invoice.total).toFixed(2)} USD</strong></p>
       <p>Due Date: ${invoice.due_date}</p>
       <a href="${payUrl}" class="btn">Pay Now</a>
-      <div class="footer">Corp 001 Inc. · orders@001.com.mx</div>
+      <div class="footer">${getCompanyName()} · ${getCompanyEmail()}</div>
     `),
   });
 }
@@ -123,7 +125,7 @@ async function sendPaymentConfirmation(patient, order, invoice, method) {
       <p>We have received your payment of <strong>$${parseFloat(invoice.total).toFixed(2)} USD</strong> for order <strong>${order.order_number}</strong>.</p>
       <p>Payment method: ${methodLabel}</p>
       <p>Your order is now being prepared for shipment.</p>
-      <div class="footer">Corp 001 Inc. · orders@001.com.mx</div>
+      <div class="footer">${getCompanyName()} · ${getCompanyEmail()}</div>
     `),
   });
 }
@@ -144,7 +146,7 @@ async function sendShippingNotification(patient, order, shipment) {
       <p><strong>Tracking Number: ${shipment.fedex_tracking_number}</strong></p>
       ${shipment.estimated_delivery ? `<p>Estimated Delivery: ${shipment.estimated_delivery}</p>` : ''}
       <a href="${trackUrl}" class="btn">Track Package</a>
-      <div class="footer">Corp 001 Inc. · orders@001.com.mx</div>
+      <div class="footer">${getCompanyName()} · ${getCompanyEmail()}</div>
     `),
   });
 }
@@ -177,7 +179,7 @@ async function sendTrackingUpdate(patient, order, shipment, eventCode, eventDesc
       <p><strong>${eventDescription}</strong></p>
       <p>Tracking: ${shipment.fedex_tracking_number}</p>
       <a href="${trackUrl}" class="btn">Track Package</a>
-      <div class="footer">Corp 001 Inc. · orders@001.com.mx</div>
+      <div class="footer">${getCompanyName()} · ${getCompanyEmail()}</div>
     `),
   });
 }
@@ -213,7 +215,7 @@ async function sendReminderEmail(patient, product, rule) {
       <p style="margin-top:16px;font-size:12px;color:#9ca3af">
         <a href="${getBaseUrl()}/reminders">Manage reminder settings</a>
       </p>
-      <div class="footer">Corp 001 Inc. · orders@001.com.mx</div>
+      <div class="footer">${getCompanyName()} · ${getCompanyEmail()}</div>
     `),
   });
 }

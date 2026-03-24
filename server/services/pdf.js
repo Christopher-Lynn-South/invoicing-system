@@ -12,8 +12,12 @@ async function generateInvoicePDF({ invoice, order, patient, items }, outputPath
     doc.pipe(stream);
 
     // ─── Header ────────────────────────────────────────────────────────────────
-    doc.fontSize(22).fillColor(BRAND_COLOR).font('Helvetica-Bold').text('Corp 001 Inc.', 50, 50);
-    doc.fontSize(10).fillColor(GRAY).font('Helvetica').text('orders@001.com.mx  ·  orders.001.com.mx', 50, 76);
+    const companyName = process.env.COMPANY_NAME || 'OrderFlow';
+    const companyEmail = process.env.COMPANY_EMAIL || process.env.MAIL_USER || '';
+    const baseUrl = process.env.BASE_URL || '';
+    doc.fontSize(22).fillColor(BRAND_COLOR).font('Helvetica-Bold').text(companyName, 50, 50);
+    const headerContact = [companyEmail, baseUrl].filter(Boolean).join('  ·  ');
+    doc.fontSize(10).fillColor(GRAY).font('Helvetica').text(headerContact, 50, 76);
 
     doc.fontSize(28).fillColor(DARK).font('Helvetica-Bold').text('INVOICE', 400, 50, { align: 'right' });
     doc.fontSize(11).fillColor(GRAY).font('Helvetica');
@@ -93,11 +97,13 @@ async function generateInvoicePDF({ invoice, order, patient, items }, outputPath
     y += 50;
     doc.fontSize(9).fillColor(GRAY).font('Helvetica');
     doc.text('Payment Methods: Credit Card, ACH Bank Transfer, or USDC on Polygon', 50, y);
-    doc.text(`Pay online: ${process.env.BASE_URL || 'https://orders.001.com.mx'}/pay/${invoice.id}`, 50, y + 14);
+    const payUrl = invoice.pay_token ? `${baseUrl}/pay/t/${invoice.pay_token}` : `${baseUrl}/pay/${invoice.id}`;
+    doc.text(`Pay online: ${payUrl}`, 50, y + 14);
 
     // ─── Footer ────────────────────────────────────────────────────────────────
+    const footerContact = companyEmail ? `For questions contact ${companyEmail}` : '';
     doc.fontSize(8).fillColor(GRAY).text(
-      'Thank you for your business. For questions contact orders@001.com.mx',
+      `Thank you for your business. ${footerContact}`.trim(),
       50, 710, { align: 'center', width: 515 }
     );
 

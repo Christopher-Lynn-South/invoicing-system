@@ -59,6 +59,13 @@ app.use(session({
 // Serve uploaded invoices and labels
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// ─── Required env var check ───────────────────────────────────────────────────
+['BASE_URL', 'COMPANY_NAME', 'COMPANY_EMAIL'].forEach(key => {
+  if (!process.env[key]) {
+    console.warn(`⚠  WARNING: ${key} is not set. Emails, SMS, and PDFs will have incomplete links/branding.`);
+  }
+});
+
 // ─── Load DB settings into process.env before routes start ───────────────────
 const { loadSettings } = require('./services/config');
 loadSettings(); // non-blocking; falls back to .env values on DB error

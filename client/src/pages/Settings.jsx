@@ -267,7 +267,9 @@ const SECTIONS = [
     title: 'App',
     icon: '⚙️',
     fields: [
-      { name: 'BASE_URL', label: 'Base URL', hint: 'e.g. https://orders.001.com.mx — used in emails and payment links' },
+      { name: 'BASE_URL', label: 'Base URL', hint: 'e.g. https://orders.your-domain.com — used in email/SMS payment links and PDFs. No trailing slash.' },
+      { name: 'COMPANY_NAME', label: 'Company Name', hint: 'Appears in email footers, SMS messages, and invoice PDFs' },
+      { name: 'COMPANY_EMAIL', label: 'Company Email', hint: 'Support/billing contact shown in email footers and invoice PDFs' },
     ],
   },
 ];
