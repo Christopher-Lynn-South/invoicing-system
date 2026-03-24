@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import useOrderStore from '../store/useOrderStore';
 import api from '../lib/api';
@@ -40,7 +40,8 @@ export default function PatientPortal() {
   const [cpMsg, setCpMsg] = useState('');
   const [cpError, setCpError] = useState('');
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
     Promise.all([
       api.get('/customer/invoices'),
       api.get('/customer/shipments'),
@@ -49,6 +50,8 @@ export default function PatientPortal() {
       setShipments(ship.data);
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   async function handleLogout() {
     await api.post('/customer/logout');
@@ -103,32 +106,38 @@ export default function PatientPortal() {
         {/* Invoices tab */}
         {tab === 'invoices' && (
           <div>
-            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Your Invoices</h2>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 600 }}>Your Invoices</h2>
+              <button onClick={load} style={{ fontSize: 12, color: 'var(--text-muted)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>
+                Refresh
+              </button>
+            </div>
             {invoices.length === 0 ? (
               <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No invoices yet.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {invoices.map(inv => (
-                  <div key={inv.id} style={{
-                    background: 'var(--bg-surface)', border: '1px solid var(--border)',
-                    borderRadius: 10, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  }}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{inv.invoice_number}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Order: {inv.order_number}</div>
-                      {inv.due_date && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Due: {inv.due_date}</div>}
+                  <Link key={inv.id} to={`/customer/portal/invoice/${inv.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                    <div style={{
+                      background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                      borderRadius: 10, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      cursor: 'pointer', transition: 'border-color 0.15s',
+                    }}
+                      onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{inv.invoice_number}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Order: {inv.order_number}</div>
+                        {inv.due_date && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Due: {inv.due_date}</div>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                        <Badge status={inv.pay_status} />
+                        <span style={{ fontWeight: 600 }}>{fmt(inv.total)}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>View →</span>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                      <Badge status={inv.pay_status} />
-                      <span style={{ fontWeight: 600 }}>{fmt(inv.total)}</span>
-                      {inv.pay_status !== 'paid' && (
-                        <Link to={`/pay/${inv.id}`} style={{
-                          background: 'var(--accent)', color: '#fff', padding: '6px 14px',
-                          borderRadius: 6, fontSize: 13, fontWeight: 600, textDecoration: 'none',
-                        }}>Pay</Link>
-                      )}
-                    </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}

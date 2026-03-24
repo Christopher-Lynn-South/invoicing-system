@@ -8,6 +8,7 @@ import Toast from './components/Toast';
 import Login from './pages/Login';
 import PatientLogin from './pages/PatientLogin';
 import PatientPortal from './pages/PatientPortal';
+import CustomerInvoiceDetail from './pages/CustomerInvoiceDetail';
 import Dashboard from './pages/Dashboard';
 import Orders from './pages/Orders';
 import OrderDetail from './pages/OrderDetail';
@@ -70,9 +71,10 @@ export default function App() {
         <Route path="/pay/t/:token" element={<PayPage />} />
         <Route path="/pay/:invoiceId" element={<PayPage />} />
 
-        {/* Patient portal */}
+        {/* Customer portal */}
         <Route path="/customer/login" element={<PatientLogin />} />
         <Route path="/customer/portal" element={<RequirePatientAuth><PatientPortal /></RequirePatientAuth>} />
+        <Route path="/customer/portal/invoice/:id" element={<RequirePatientAuth><CustomerInvoiceDetail /></RequirePatientAuth>} />
 
         {/* Admin / staff routes */}
         <Route path="/" element={<RequireAuth><Layout /></RequireAuth>}>

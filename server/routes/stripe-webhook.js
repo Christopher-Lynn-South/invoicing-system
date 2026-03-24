@@ -27,8 +27,25 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
   if (event.type === 'payment_intent.succeeded') {
     const pi = event.data.object;
     try {
-      const [invoice] = await db.select().from(invoices)
+      // Primary lookup by stored intent ID; fallback to invoice_number in metadata
+      let [invoice] = await db.select().from(invoices)
         .where(eq(invoices.stripe_payment_intent_id, pi.id));
+
+      if (!invoice && pi.metadata?.invoice_number) {
+        console.log(`Webhook: intent ID not found, trying metadata invoice_number=${pi.metadata.invoice_number}`);
+        [invoice] = await db.select().from(invoices)
+          .where(eq(invoices.invoice_number, pi.metadata.invoice_number));
+        // Back-fill the intent ID so future webhooks hit on the first lookup
+        if (invoice) {
+          await db.update(invoices)
+            .set({ stripe_payment_intent_id: pi.id })
+            .where(eq(invoices.id, invoice.id));
+        }
+      }
+
+      if (!invoice) {
+        console.warn(`Webhook payment_intent.succeeded: no invoice found for pi=${pi.id}`);
+      }
 
       if (invoice && invoice.pay_status !== 'paid') {
         const [updated] = await db.update(invoices)

@@ -125,9 +125,65 @@ router.get('/invoices/:id', async (req, res) => {
       .innerJoin(products, eq(order_items.product_id, products.id))
       .where(eq(order_items.order_id, row.order_id));
 
-    return res.json({ ...row, items });
+    // Shipment for this order (if any)
+    const [shipment] = await db
+      .select({
+        id: shipments.id,
+        fedex_tracking_number: shipments.fedex_tracking_number,
+        status: shipments.status,
+        ship_date: shipments.ship_date,
+        estimated_delivery: shipments.estimated_delivery,
+        latest_status: shipments.latest_status,
+      })
+      .from(shipments)
+      .where(eq(shipments.order_id, row.order_id))
+      .limit(1);
+
+    return res.json({ ...row, items, shipment: shipment || null });
   } catch (err) {
     console.error('Patient invoice detail error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── PATCH /api/customer/invoices/:id/note  (customer adds note to order) ────
+router.patch('/invoices/:id/note', async (req, res) => {
+  try {
+    const { note } = req.body;
+    if (typeof note !== 'string') {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'note must be a string.' });
+    }
+
+    // Find invoice and verify ownership
+    const [row] = await db
+      .select({ order_id: invoices.order_id })
+      .from(invoices)
+      .innerJoin(sales_orders, eq(invoices.order_id, sales_orders.id))
+      .where(eq(invoices.id, req.params.id))
+      .limit(1);
+
+    if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [order] = await db.select({ id: sales_orders.id, patient_id: sales_orders.patient_id, notes: sales_orders.notes })
+      .from(sales_orders).where(eq(sales_orders.id, row.order_id)).limit(1);
+
+    if (!order || order.patient_id !== req.session.customerId) {
+      return res.status(403).json({ error: 'FORBIDDEN' });
+    }
+
+    // Append timestamped note rather than overwrite
+    const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const appended = order.notes
+      ? `${order.notes}\n[Customer ${timestamp}]: ${note.trim()}`
+      : `[Customer ${timestamp}]: ${note.trim()}`;
+
+    await db.update(sales_orders)
+      .set({ notes: appended, updated_at: new Date() })
+      .where(eq(sales_orders.id, order.id));
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Customer note error:', err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });
