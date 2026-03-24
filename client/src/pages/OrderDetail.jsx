@@ -72,7 +72,11 @@ export default function OrderDetail() {
       setShipModal(false);
       load();
     } catch (err) {
-      addToast(err.response?.data?.message || 'Shipping failed', 'error');
+      const fedexErrors = err.response?.data?.details?.errors;
+      const msg = fedexErrors?.length
+        ? fedexErrors.map(e => e.message || e.code).join(' · ')
+        : err.response?.data?.message || 'Shipping failed';
+      addToast(msg, 'error');
     }
     setShipping(false);
   }
