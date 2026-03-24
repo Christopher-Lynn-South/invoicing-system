@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
-import PatientPayPortal from '../components/PatientPayPortal';
+import CustomerPayPortal from '../components/CustomerPayPortal';
 import { fmtDate } from '../lib/utils';
 
 export default function PayPage() {
@@ -84,7 +84,7 @@ export default function PayPage() {
                   {invoice.patient?.name} · Due: {fmtDate(invoice.due_date)}
                 </p>
               </div>
-              <PatientPayPortal invoice={invoice} />
+              <CustomerPayPortal invoice={invoice} />
             </div>
           )}
         </>
