@@ -8,8 +8,11 @@ const api = axios.create({
 api.interceptors.response.use(
   res => res,
   err => {
-    const onLoginPage = ['/login', '/patient/login'].includes(window.location.pathname);
-    if (err.response?.status === 401 && !onLoginPage) {
+    const path = window.location.pathname;
+    const isPublicPage = path.startsWith('/pay/') ||
+      path === '/login' ||
+      path === '/patient/login';
+    if (err.response?.status === 401 && !isPublicPage) {
       window.location.href = '/login';
     }
     return Promise.reject(err);
