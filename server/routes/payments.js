@@ -44,7 +44,18 @@ router.post('/:invoiceId/intent', validate(payIntentSchema), async (req, res) =>
         method: 'usdc',
         wallet: process.env.MERCHANT_USDC_WALLET,
         amount_usdc: total.toFixed(2),
-        contract: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+        networks: [
+          {
+            name: 'polygon',
+            label: 'Polygon (recommended)',
+            contract: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+          },
+          {
+            name: 'ethereum',
+            label: 'Ethereum Mainnet',
+            contract: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+          },
+        ],
       });
     }
 
@@ -88,18 +99,19 @@ router.post('/:invoiceId/usdc-confirm', validate(usdcConfirmSchema), async (req,
     if (invoice.pay_status === 'paid') return res.status(400).json({ error: 'ALREADY_PAID' });
 
     const total = parseFloat(invoice.total);
-    const valid = await usdcService.verifyUSDCTransaction(tx_hash, total);
+    const result = await usdcService.verifyUSDCTransaction(tx_hash, total);
 
-    if (!valid) {
+    if (!result.verified) {
       return res.status(400).json({
         error: 'INVALID_TX',
-        message: 'Transaction could not be verified. Check recipient address, contract, and amount.',
+        message: 'Transaction could not be verified on Polygon or Ethereum. Check recipient address, contract, and amount.',
       });
     }
 
     const [updated] = await db.update(invoices)
       .set({
         pay_status: 'paid',
+        pay_method: `usdc_${result.network}`,
         usdc_tx_hash: tx_hash,
         paid_at: new Date(),
       })

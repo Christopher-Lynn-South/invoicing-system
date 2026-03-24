@@ -31,7 +31,7 @@ const METHOD_CARDS = [
   },
   {
     id: 'usdc',
-    label: 'USDC on Polygon',
+    label: 'USDC (Polygon or Ethereum)',
     icon: '🔷',
     desc: 'No fee — instant',
   },
@@ -170,7 +170,17 @@ function USDCPayForm({ invoiceId, totalUSDC, onSuccess }) {
           <p style={{ fontFamily: 'var(--brand-mono)', fontSize: 11, wordBreak: 'break-all', color: 'var(--text-primary)' }}>
             {walletInfo.wallet}
           </p>
-          <p style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 6 }}>Network: Polygon (MATIC)</p>
+          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {(walletInfo.networks || []).map(n => (
+              <span key={n.name} style={{
+                fontSize: 11,
+                color: n.name === 'polygon' ? 'var(--success)' : 'var(--text-muted)',
+                fontWeight: n.name === 'polygon' ? 600 : 400,
+              }}>
+                {n.name === 'polygon' ? '★ ' : '◦ '}{n.label}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
       <div style={{ marginBottom: 12 }}>

@@ -1,7 +1,25 @@
 const { ethers } = require('ethers');
 
-const USDC_CONTRACT = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
-const USDC_DECIMALS = 6;
+// USDC contracts per network
+const NETWORKS = [
+  {
+    name: 'polygon',
+    envKey: 'POLYGON_RPC_URL',
+    contracts: [
+      '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359', // native USDC
+      '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174', // bridged USDC.e
+    ],
+    decimals: 6,
+  },
+  {
+    name: 'ethereum',
+    envKey: 'ETH_RPC_URL',
+    contracts: [
+      '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC on Ethereum mainnet
+    ],
+    decimals: 6,
+  },
+];
 
 // ERC-20 Transfer event ABI fragment
 const TRANSFER_ABI = [
@@ -9,15 +27,12 @@ const TRANSFER_ABI = [
 ];
 
 /**
- * Verify a USDC transfer on Polygon.
- * Returns true if the tx sent at least `expectedUSD` USDC to the merchant wallet.
+ * Check one network for a valid USDC transfer to the merchant wallet.
+ * Returns true if found, false otherwise.
  */
-async function verifyUSDCTransaction(txHash, expectedUSD) {
-  const rpcUrl = process.env.POLYGON_RPC_URL;
-  const merchantWallet = process.env.MERCHANT_USDC_WALLET;
-
-  if (!rpcUrl) throw new Error('POLYGON_RPC_URL not configured');
-  if (!merchantWallet) throw new Error('MERCHANT_USDC_WALLET not configured');
+async function checkNetwork(network, txHash, expectedUSD, merchantWallet) {
+  const rpcUrl = process.env[network.envKey];
+  if (!rpcUrl) return false;
 
   try {
     const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -25,10 +40,10 @@ async function verifyUSDCTransaction(txHash, expectedUSD) {
     if (!receipt || receipt.status !== 1) return false;
 
     const iface = new ethers.Interface(TRANSFER_ABI);
-    const contract = USDC_CONTRACT.toLowerCase();
+    const contracts = network.contracts.map(c => c.toLowerCase());
 
     for (const log of receipt.logs) {
-      if (log.address.toLowerCase() !== contract) continue;
+      if (!contracts.includes(log.address.toLowerCase())) continue;
 
       let parsed;
       try {
@@ -41,19 +56,33 @@ async function verifyUSDCTransaction(txHash, expectedUSD) {
         const to = parsed.args.to.toLowerCase();
         if (to !== merchantWallet.toLowerCase()) continue;
 
-        const value = parsed.args.value;
-        const usdAmount = parseFloat(ethers.formatUnits(value, USDC_DECIMALS));
-
-        // Accept if on-chain amount >= invoice total (allow minor rounding)
+        const usdAmount = parseFloat(ethers.formatUnits(parsed.args.value, network.decimals));
         if (usdAmount >= expectedUSD - 0.01) return true;
       }
     }
 
     return false;
   } catch (err) {
-    console.error('USDC verification error:', err.message);
+    console.error(`USDC verification error on ${network.name}:`, err.message);
     return false;
   }
+}
+
+/**
+ * Verify a USDC transfer on Polygon (preferred) or Ethereum mainnet.
+ * Returns { verified: true, network: 'polygon'|'ethereum' } or { verified: false }.
+ * Polygon is tried first.
+ */
+async function verifyUSDCTransaction(txHash, expectedUSD) {
+  const merchantWallet = process.env.MERCHANT_USDC_WALLET;
+  if (!merchantWallet) throw new Error('MERCHANT_USDC_WALLET not configured');
+
+  for (const network of NETWORKS) {
+    const found = await checkNetwork(network, txHash, expectedUSD, merchantWallet);
+    if (found) return { verified: true, network: network.name };
+  }
+
+  return { verified: false };
 }
 
 module.exports = { verifyUSDCTransaction };
