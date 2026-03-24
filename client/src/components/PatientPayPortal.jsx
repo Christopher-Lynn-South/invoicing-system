@@ -246,15 +246,19 @@ export default function PatientPayPortal({ invoice }) {
 
   function onSuccess() {
     setPaid(true);
-    setTimeout(() => window.location.reload(), 3000);
   }
 
   if (paid) {
     return (
-      <div style={{ textAlign: 'center', padding: '40px 0' }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
-        <h2 style={{ color: 'var(--success)', marginBottom: 8 }}>Payment Successful!</h2>
-        <p style={{ color: 'var(--text-muted)' }}>Thank you. Redirecting…</p>
+      <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+        <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
+        <h2 style={{ color: 'var(--success)', marginBottom: 12, fontSize: 24 }}>Payment Received!</h2>
+        <p style={{ color: 'var(--text-primary)', fontSize: 15, marginBottom: 8 }}>
+          Thank you — your payment has been successfully processed.
+        </p>
+        <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+          You will receive a confirmation email shortly.
+        </p>
       </div>
     );
   }
