@@ -9,7 +9,7 @@ const { requireLogin } = require('../middleware/auth');
 const { validate, orderSchema, shipSchema } = require('../middleware/validate');
 const fedexService = require('../services/fedex');
 const crypto = require('crypto');
-const { sendShippingNotification, sendInvoiceEmail } = require('../services/mailer');
+const { sendShippingNotification, sendInvoiceEmail, sendCustomEmail } = require('../services/mailer');
 const { sendInvoiceSMS, sendShippingSMS } = require('../services/sms');
 
 function generatePayToken() { return crypto.randomBytes(32).toString('hex'); }
@@ -389,6 +389,62 @@ router.post('/:id/resend-shipping', requireLogin, async (req, res) => {
     }
 
     return res.json({ ok: true, sent });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+});
+
+// POST /api/orders/:id/notes  — append a staff note to the order
+router.post('/:id/notes', requireLogin, async (req, res) => {
+  try {
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
+    if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const note = (req.body.note || '').trim();
+    if (!note) return res.status(400).json({ error: 'NOTE_REQUIRED' });
+
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    const entry = `[Staff ${timestamp}]: ${note}`;
+    const newNotes = order.notes ? `${order.notes}\n${entry}` : entry;
+
+    const [updated] = await db.update(sales_orders)
+      .set({ notes: newNotes, updated_at: new Date() })
+      .where(eq(sales_orders.id, req.params.id))
+      .returning();
+
+    return res.json({ ok: true, notes: updated.notes });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// POST /api/orders/:id/send-email  — send a custom email to the patient
+router.post('/:id/send-email', requireLogin, async (req, res) => {
+  try {
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
+    if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+    if (!patient?.email) return res.status(400).json({ error: 'NO_EMAIL', message: 'Patient has no email address on file.' });
+
+    const subject = (req.body.subject || '').trim();
+    const body = (req.body.body || '').trim();
+    if (!subject) return res.status(400).json({ error: 'SUBJECT_REQUIRED' });
+    if (!body) return res.status(400).json({ error: 'BODY_REQUIRED' });
+
+    await sendCustomEmail(patient, order, { subject, body });
+
+    // Auto-log a note that the email was sent
+    const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
+    const entry = `[Staff ${timestamp}]: Email sent — "${subject}"`;
+    const newNotes = order.notes ? `${order.notes}\n${entry}` : entry;
+    await db.update(sales_orders)
+      .set({ notes: newNotes, updated_at: new Date() })
+      .where(eq(sales_orders.id, req.params.id));
+
+    return res.json({ ok: true });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });

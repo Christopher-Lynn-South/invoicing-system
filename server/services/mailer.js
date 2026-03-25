@@ -225,6 +225,36 @@ async function sendMail(options) {
   await getTransporter().sendMail({ from: getFrom(), ...options });
 }
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Staff-composed email to a patient — plain-text body rendered as HTML paragraphs
+async function sendCustomEmail(patient, order, { subject, body }) {
+  const { to, cc } = await getRecipients(patient.id, patient.email);
+  if (!to) return;
+  const htmlBody = body
+    .split('\n')
+    .map(line => line.trim() ? `<p>${escapeHtml(line)}</p>` : '')
+    .join('');
+  await getTransporter().sendMail({
+    from: getFrom(),
+    to,
+    cc: cc.length ? cc : undefined,
+    subject,
+    html: htmlWrap(`
+      <h2>${escapeHtml(subject)}</h2>
+      <p>Dear ${escapeHtml(patient.name)},</p>
+      ${htmlBody}
+      <div class="footer">${escapeHtml(getCompanyName())} · ${escapeHtml(getCompanyEmail())} · Re: Order ${escapeHtml(order.order_number)}</div>
+    `),
+  });
+}
+
 module.exports = {
   transporter,
   sendMail,
@@ -235,4 +265,5 @@ module.exports = {
   sendTrackingUpdate,
   sendAdminAlert,
   sendReminderEmail,
+  sendCustomEmail,
 };

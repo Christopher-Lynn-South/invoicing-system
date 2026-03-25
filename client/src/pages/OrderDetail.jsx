@@ -49,6 +49,12 @@ export default function OrderDetail() {
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [resendingInvoice, setResendingInvoice] = useState(false);
   const [resendingShipping, setResendingShipping] = useState(false);
+  const [newNote, setNewNote] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [emailTemplate, setEmailTemplate] = useState('custom');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   async function load() {
     try {
@@ -126,6 +132,82 @@ export default function OrderDetail() {
       addToast(err.response?.data?.message || 'Resend failed', 'error');
     }
     setResendingShipping(false);
+  }
+
+  function parseNotes(text) {
+    if (!text) return [];
+    return text.split('\n').filter(Boolean).map(line => {
+      const m = line.match(/^\[(.+?)\]: (.+)$/);
+      return m ? { label: m[1], text: m[2] } : { label: null, text: line };
+    });
+  }
+
+  function getTemplateDefaults(template, ord) {
+    const inv = ord.invoice;
+    const ship = ord.shipment;
+    if (template === 'transaction') {
+      return {
+        subject: `Payment confirmation — Order ${ord.order_number}`,
+        body: [
+          `Your payment for order ${ord.order_number} has been received.`,
+          '',
+          inv ? `Invoice #: ${inv.invoice_number}` : '',
+          inv ? `Order Total: $${parseFloat(inv.total).toFixed(2)} USD` : '',
+          inv?.pay_method ? `Payment Method: ${inv.pay_method.replace(/_/g, ' ').toUpperCase()}` : '',
+          '',
+          'Thank you for your business. Your order is being prepared for shipment.',
+        ].filter(l => l !== undefined).join('\n'),
+      };
+    }
+    if (template === 'shipping') {
+      return {
+        subject: `Your order ${ord.order_number} has shipped`,
+        body: [
+          `Your order ${ord.order_number} has been shipped via FedEx.`,
+          '',
+          ship ? `Tracking Number: ${ship.fedex_tracking_number}` : '',
+          ship ? `Service: ${ship.service_type}` : '',
+          ship?.estimated_delivery ? `Estimated Delivery: ${ship.estimated_delivery}` : '',
+          '',
+          'Shipping Instructions:',
+          '(Edit this section with any special handling instructions for the recipient.)',
+          '',
+          ship ? `Track your package: https://www.fedex.com/fedextrack/?tracknumbers=${ship.fedex_tracking_number}` : '',
+        ].filter(l => l !== undefined).join('\n'),
+      };
+    }
+    return { subject: '', body: '' };
+  }
+
+  async function saveNote(e) {
+    e.preventDefault();
+    if (!newNote.trim()) return;
+    setSavingNote(true);
+    try {
+      const { data } = await api.post(`/orders/${id}/notes`, { note: newNote });
+      setOrder(o => ({ ...o, notes: data.notes }));
+      setNewNote('');
+      addToast('Note saved', 'success');
+    } catch {
+      addToast('Failed to save note', 'error');
+    }
+    setSavingNote(false);
+  }
+
+  async function sendEmail(e) {
+    e.preventDefault();
+    setSendingEmail(true);
+    try {
+      await api.post(`/orders/${id}/send-email`, { subject: emailSubject, body: emailBody });
+      addToast('Email sent to client', 'success');
+      setEmailSubject('');
+      setEmailBody('');
+      setEmailTemplate('custom');
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to send email', 'error');
+    }
+    setSendingEmail(false);
   }
 
   async function refreshTracking() {
@@ -381,6 +463,110 @@ export default function OrderDetail() {
                 </div>
               )}
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Notes + Email — full width below the main grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginTop: 24 }}>
+        {/* Order Notes */}
+        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Order Notes</h2>
+          <div style={{ marginBottom: 16, maxHeight: 220, overflowY: 'auto' }}>
+            {parseNotes(order.notes).length === 0 ? (
+              <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No notes yet.</p>
+            ) : parseNotes(order.notes).map((n, i) => (
+              <div key={i} style={{
+                borderTop: i > 0 ? '1px solid var(--border)' : 'none',
+                paddingTop: i > 0 ? 10 : 0, marginBottom: 10,
+              }}>
+                {n.label && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2, fontFamily: 'var(--brand-mono)' }}>
+                    {n.label}
+                  </div>
+                )}
+                <div style={{ fontSize: 13 }}>{n.text}</div>
+              </div>
+            ))}
+          </div>
+          <form onSubmit={saveNote}>
+            <textarea
+              value={newNote}
+              onChange={e => setNewNote(e.target.value)}
+              placeholder="Add a staff note…"
+              rows={3}
+              style={{ width: '100%', marginBottom: 8, resize: 'vertical', fontFamily: 'inherit', fontSize: 13, boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button type="submit" disabled={savingNote || !newNote.trim()} style={{
+                background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8,
+                padding: '6px 18px', fontSize: 13, fontWeight: 600,
+                opacity: !newNote.trim() ? 0.5 : 1, cursor: newNote.trim() ? 'pointer' : 'default',
+              }}>
+                {savingNote ? 'Saving…' : 'Save Note'}
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* Email Client */}
+        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Email Client</h2>
+          {!order.patient?.email ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No email address on file for this patient.</p>
+          ) : (
+            <form onSubmit={sendEmail}>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Template</label>
+                <select
+                  value={emailTemplate}
+                  onChange={e => {
+                    const t = e.target.value;
+                    setEmailTemplate(t);
+                    const defaults = getTemplateDefaults(t, order);
+                    setEmailSubject(defaults.subject);
+                    setEmailBody(defaults.body);
+                  }}
+                  style={{ width: '100%' }}
+                >
+                  <option value="custom">Custom message</option>
+                  <option value="transaction">Transaction summary</option>
+                  {hasShipment && <option value="shipping">Shipping notice + instructions</option>}
+                </select>
+              </div>
+              <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+                To: <span style={{ color: 'var(--text-primary)', fontFamily: 'var(--brand-mono)' }}>{order.patient.email}</span>
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Subject</label>
+                <input
+                  value={emailSubject}
+                  onChange={e => setEmailSubject(e.target.value)}
+                  placeholder="Subject line"
+                  required
+                  style={{ width: '100%' }}
+                />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Message</label>
+                <textarea
+                  value={emailBody}
+                  onChange={e => setEmailBody(e.target.value)}
+                  placeholder="Write your message here…"
+                  rows={8}
+                  required
+                  style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="submit" disabled={sendingEmail} style={{
+                  background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8,
+                  padding: '8px 22px', fontSize: 13, fontWeight: 600,
+                }}>
+                  {sendingEmail ? 'Sending…' : '→ Send Email'}
+                </button>
+              </div>
+            </form>
           )}
         </div>
       </div>
