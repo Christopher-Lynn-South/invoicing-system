@@ -23,11 +23,13 @@ router.post('/:invoiceId/intent', validate(payIntentSchema), async (req, res) =>
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
 
     let processingFee = 0;
-    let total = parseFloat(invoice.subtotal);
+    // Base = products subtotal + any saved shipping charge
+    const base = parseFloat(invoice.subtotal) + parseFloat(invoice.shipping_charge || 0);
+    let total = base;
 
     if (method === 'stripe_cc') {
-      processingFee = Math.round(total * CC_FEE_RATE * 100) / 100;
-      total = Math.round((total + processingFee) * 100) / 100;
+      processingFee = Math.round(base * CC_FEE_RATE * 100) / 100;
+      total = Math.round((base + processingFee) * 100) / 100;
     }
 
     // Update invoice with locked fee and total

@@ -59,6 +59,10 @@ const sales_orders = pgTable('sales_orders', {
   patient_id: uuid('patient_id').notNull().references(() => patients.id),
   status: text('status').notNull().default('draft'),
   notes: text('notes'),
+  // Saved FedEx rate quote — included in invoice when present
+  // { service_type, package_type, weight_lbs, length_in, width_in, height_in,
+  //   net_charge, currency, transit_days, delivery_date, quoted_at }
+  shipping_quote: jsonb('shipping_quote'),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
   updated_at: timestamp('updated_at', { withTimezone: true }).default(sql`now()`),
 });
@@ -79,6 +83,7 @@ const invoices = pgTable('invoices', {
   invoice_number: text('invoice_number').unique().notNull(),
   order_id: uuid('order_id').unique().notNull().references(() => sales_orders.id),
   subtotal: numeric('subtotal', { precision: 10, scale: 2 }).notNull(),
+  shipping_charge: numeric('shipping_charge', { precision: 10, scale: 2 }).default('0'),
   processing_fee: numeric('processing_fee', { precision: 10, scale: 2 }).default('0'),
   total: numeric('total', { precision: 10, scale: 2 }).notNull(),
   pay_method: text('pay_method'),

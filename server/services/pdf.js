@@ -96,14 +96,22 @@ async function generateInvoicePDF({ invoice, order, patient, items }, outputPath
     doc.moveTo(350, y).lineTo(565, y).strokeColor('#e5e7eb').lineWidth(1).stroke();
     y += 12;
 
-    const subtotal = parseFloat(invoice.subtotal);
-    const fee = parseFloat(invoice.processing_fee || 0);
-    const total = parseFloat(invoice.total);
+    const subtotal  = parseFloat(invoice.subtotal);
+    const shipping  = parseFloat(invoice.shipping_charge || 0);
+    const fee       = parseFloat(invoice.processing_fee || 0);
+    const total     = parseFloat(invoice.total);
 
     doc.fontSize(10).fillColor(GRAY).font('Helvetica');
     doc.text('Subtotal:', 350, y, { width: 130, align: 'right' });
     doc.fillColor(DARK).text(`$${subtotal.toFixed(2)}`, 480, y, { width: 80, align: 'right' });
     y += 18;
+
+    if (shipping > 0) {
+      const shippingLabel = invoice.shipping_service ? `Shipping (${invoice.shipping_service}):` : 'Shipping:';
+      doc.fillColor(GRAY).font('Helvetica').text(shippingLabel, 350, y, { width: 130, align: 'right' });
+      doc.fillColor(DARK).text(`$${shipping.toFixed(2)}`, 480, y, { width: 80, align: 'right' });
+      y += 18;
+    }
 
     if (fee > 0) {
       doc.fillColor(GRAY).font('Helvetica').text('CC Processing Fee (3.9%):', 350, y, { width: 130, align: 'right' });

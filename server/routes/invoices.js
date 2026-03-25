@@ -64,6 +64,7 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
       .where(eq(order_items.order_id, order.id));
 
     const subtotal = items.reduce((sum, r) => sum + parseFloat(r.item.line_total), 0);
+    const shipping_charge = order.shipping_quote?.net_charge ? parseFloat(order.shipping_quote.net_charge) : 0;
     const invoice_number = await generateInvoiceNumber();
     const due_date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
@@ -71,8 +72,9 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
       invoice_number,
       order_id: order.id,
       subtotal: subtotal.toFixed(2),
+      shipping_charge: shipping_charge.toFixed(2),
       processing_fee: '0.00',
-      total: subtotal.toFixed(2),
+      total: (subtotal + shipping_charge).toFixed(2),
       pay_status: 'pending',
       due_date,
       pay_token: generatePayToken(),
@@ -90,7 +92,7 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
     fs.mkdirSync(invoicesDir, { recursive: true });
     const pdfPath = path.join(invoicesDir, `${invoice.id}.pdf`);
     await generateInvoicePDF({
-      invoice,
+      invoice: { ...invoice, shipping_service: order.shipping_quote?.service_type || null },
       order,
       patient,
       items: items.map(r => ({ ...r.item, product_name: r.product_name })),

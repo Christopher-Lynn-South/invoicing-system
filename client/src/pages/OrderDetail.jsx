@@ -6,6 +6,39 @@ import { fmtCurrency, fmtDate, fmtDatetime, relativeTime } from '../lib/utils';
 import Modal from '../components/Modal';
 import AddressAutocomplete from '../components/AddressAutocomplete';
 
+// ─── FedEx compatibility tables ───────────────────────────────────────────────
+// Ground = YOUR_PACKAGING only. Express accepts FedEx-supplied boxes too.
+const SERVICE_VALID_PACKAGES = {
+  FEDEX_GROUND:           ['YOUR_PACKAGING'],
+  FEDEX_HOME_DELIVERY:    ['YOUR_PACKAGING'],
+  FEDEX_EXPRESS_SAVER:    ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_TUBE','FEDEX_SMALL_BOX','FEDEX_MEDIUM_BOX','FEDEX_LARGE_BOX','FEDEX_EXTRA_LARGE_BOX'],
+  FEDEX_2_DAY:            ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_SMALL_BOX','FEDEX_MEDIUM_BOX','FEDEX_LARGE_BOX','FEDEX_EXTRA_LARGE_BOX'],
+  FEDEX_2_DAY_AM:         ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_SMALL_BOX','FEDEX_MEDIUM_BOX','FEDEX_LARGE_BOX','FEDEX_EXTRA_LARGE_BOX'],
+  STANDARD_OVERNIGHT:     ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_SMALL_BOX','FEDEX_MEDIUM_BOX','FEDEX_LARGE_BOX','FEDEX_EXTRA_LARGE_BOX'],
+  PRIORITY_OVERNIGHT:     ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_TUBE','FEDEX_SMALL_BOX','FEDEX_MEDIUM_BOX','FEDEX_LARGE_BOX','FEDEX_EXTRA_LARGE_BOX'],
+  FIRST_OVERNIGHT:        ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_SMALL_BOX','FEDEX_MEDIUM_BOX','FEDEX_LARGE_BOX','FEDEX_EXTRA_LARGE_BOX'],
+  INTERNATIONAL_ECONOMY:  ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_10KG_BOX','FEDEX_25KG_BOX'],
+  INTERNATIONAL_PRIORITY: ['YOUR_PACKAGING','FEDEX_ENVELOPE','FEDEX_PAK','FEDEX_10KG_BOX','FEDEX_25KG_BOX'],
+};
+const PACKAGE_LABELS = {
+  YOUR_PACKAGING:       'Your Own Box',
+  FEDEX_ENVELOPE:       'FedEx Envelope (≤0.5 lb)',
+  FEDEX_PAK:            'FedEx Pak (≤10 lb)',
+  FEDEX_TUBE:           'FedEx Tube (≤20 lb)',
+  FEDEX_SMALL_BOX:      'FedEx Small Box (≤20 lb)',
+  FEDEX_MEDIUM_BOX:     'FedEx Medium Box (≤20 lb)',
+  FEDEX_LARGE_BOX:      'FedEx Large Box (≤20 lb)',
+  FEDEX_EXTRA_LARGE_BOX:'FedEx Extra Large Box (≤20 lb)',
+  FEDEX_10KG_BOX:       'FedEx 10kg Box (Intl ≤22 lb)',
+  FEDEX_25KG_BOX:       'FedEx 25kg Box (Intl ≤55 lb)',
+};
+const SERVICE_LABELS = {
+  FEDEX_GROUND:'FedEx Ground', FEDEX_HOME_DELIVERY:'FedEx Home Delivery',
+  FEDEX_EXPRESS_SAVER:'Express Saver (3-day)', FEDEX_2_DAY:'FedEx 2Day',
+  FEDEX_2_DAY_AM:'FedEx 2Day AM', STANDARD_OVERNIGHT:'Standard Overnight',
+  PRIORITY_OVERNIGHT:'Priority Overnight', FIRST_OVERNIGHT:'First Overnight',
+  INTERNATIONAL_ECONOMY:'International Economy', INTERNATIONAL_PRIORITY:'International Priority',
+};
 const BOX_WEIGHT_MAX = {
   FEDEX_ENVELOPE: 0.5,
   FEDEX_PAK: 10,
@@ -44,8 +77,14 @@ export default function OrderDetail() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [shipModal, setShipModal] = useState(false);
-  const [shipForm, setShipForm] = useState({ service: 'FEDEX_GROUND', box_type: 'FEDEX_LARGE_BOX', weight_lbs: '', recipient_name: '', recipient_street: '', recipient_city: '', recipient_state: '', recipient_zip: '', recipient_country: 'US' });
+  const [shipForm, setShipForm] = useState({ service: 'FEDEX_GROUND', box_type: 'YOUR_PACKAGING', weight_lbs: '', length_in: '', width_in: '', height_in: '', recipient_name: '', recipient_street: '', recipient_city: '', recipient_state: '', recipient_zip: '', recipient_country: 'US' });
   const [shipping, setShipping] = useState(false);
+  // Rate quote state
+  const [rqForm, setRqForm] = useState({ package_type: 'YOUR_PACKAGING', weight_lbs: '', length_in: '', width_in: '', height_in: '' });
+  const [rqRates, setRqRates] = useState([]);
+  const [rqLoading, setRqLoading] = useState(false);
+  const [rqSelected, setRqSelected] = useState(null);
+  const [rqSaving, setRqSaving] = useState(false);
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [resendingInvoice, setResendingInvoice] = useState(false);
   const [resendingShipping, setResendingShipping] = useState(false);
@@ -101,6 +140,9 @@ export default function OrderDetail() {
         service: shipForm.service,
         box_type: shipForm.box_type,
         weight_lbs: parseFloat(shipForm.weight_lbs),
+        length_in: shipForm.box_type === 'YOUR_PACKAGING' && shipForm.length_in ? parseFloat(shipForm.length_in) : undefined,
+        width_in:  shipForm.box_type === 'YOUR_PACKAGING' && shipForm.width_in  ? parseFloat(shipForm.width_in)  : undefined,
+        height_in: shipForm.box_type === 'YOUR_PACKAGING' && shipForm.height_in ? parseFloat(shipForm.height_in) : undefined,
         recipient_name: shipForm.recipient_name || undefined,
         recipient_street: shipForm.recipient_street || undefined,
         recipient_city: shipForm.recipient_city || undefined,
@@ -202,6 +244,51 @@ export default function OrderDetail() {
     setSavingItems(false);
   }
 
+  async function getShippingRates(e) {
+    e.preventDefault();
+    setRqLoading(true); setRqRates([]); setRqSelected(null);
+    try {
+      const { data } = await api.post(`/orders/${id}/rate-quote`, {
+        package_type: rqForm.package_type,
+        weight_lbs:   parseFloat(rqForm.weight_lbs),
+        length_in:    rqForm.length_in || undefined,
+        width_in:     rqForm.width_in  || undefined,
+        height_in:    rqForm.height_in || undefined,
+      });
+      if (!data.rates?.length) addToast('No rates returned from FedEx. Check package/weight/address.', 'warning');
+      setRqRates(data.rates || []);
+    } catch (err) {
+      const fedexMsg = err.response?.data?.details?.errors?.[0]?.message || err.response?.data?.message || 'Rate quote failed';
+      addToast(fedexMsg, 'error');
+    }
+    setRqLoading(false);
+  }
+
+  async function saveShippingQuote() {
+    if (!rqSelected) return;
+    setRqSaving(true);
+    try {
+      await api.patch(`/orders/${id}/shipping-quote`, {
+        service_type:  rqSelected.serviceType,
+        package_type:  rqForm.package_type,
+        weight_lbs:    parseFloat(rqForm.weight_lbs),
+        length_in:     rqForm.length_in || undefined,
+        width_in:      rqForm.width_in  || undefined,
+        height_in:     rqForm.height_in || undefined,
+        net_charge:    rqSelected.netCharge,
+        currency:      rqSelected.currency,
+        transit_days:  rqSelected.transitDays,
+        delivery_date: rqSelected.deliveryDate,
+      });
+      addToast('Shipping added to order', 'success');
+      setRqRates([]); setRqSelected(null);
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to save', 'error');
+    }
+    setRqSaving(false);
+  }
+
   function parseNotes(text) {
     if (!text) return [];
     return text.split('\n').filter(Boolean).map(line => {
@@ -270,8 +357,9 @@ export default function OrderDetail() {
   const isEditable = ['draft', 'pending_payment'].includes(order.status) &&
     (!order.invoice || order.invoice.pay_status === 'pending');
 
-  const subtotal = order.items.reduce((sum, i) => sum + parseFloat(i.line_total), 0);
+  const subtotal     = order.items.reduce((sum, i) => sum + parseFloat(i.line_total), 0);
   const editSubtotal = editItems.reduce((sum, i) => sum + parseFloat(i.unit_price) * i.quantity, 0);
+  const shippingQuote = order.shipping_quote || null;
 
   return (
     <div>
@@ -296,6 +384,83 @@ export default function OrderDetail() {
             {i < STEPS.length - 1 && <span style={{ color: 'var(--border)', fontSize: 18 }}>→</span>}
           </React.Fragment>
         ))}
+      </div>
+
+      {/* ── Shipping Quote — full width ─────────────────────────────────── */}
+      <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600 }}>Shipping Quote</h2>
+          {shippingQuote && (
+            <div style={{ fontSize: 13, color: 'var(--success)', fontWeight: 600 }}>
+              {SERVICE_LABELS[shippingQuote.service_type] || shippingQuote.service_type} · {fmtCurrency(shippingQuote.net_charge)} {shippingQuote.currency}
+              {shippingQuote.transit_days && <span style={{ color: 'var(--text-muted)', fontWeight: 400, marginLeft: 8 }}>· {shippingQuote.transit_days} days</span>}
+            </div>
+          )}
+        </div>
+
+        <form onSubmit={getShippingRates} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'end', marginBottom: 14 }}>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Package Type</label>
+            <select value={rqForm.package_type} onChange={e => setRqForm(f => ({ ...f, package_type: e.target.value }))} style={{ width: '100%' }}>
+              {Object.entries(PACKAGE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Weight (lbs)</label>
+            <input type="number" step="0.1" min="0.1" required value={rqForm.weight_lbs}
+              onChange={e => setRqForm(f => ({ ...f, weight_lbs: e.target.value }))} style={{ width: '100%' }} />
+          </div>
+          {rqForm.package_type === 'YOUR_PACKAGING' ? (
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Dimensions L×W×H (in)</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
+                <input type="number" min="1" placeholder="L" required value={rqForm.length_in} onChange={e => setRqForm(f => ({ ...f, length_in: e.target.value }))} />
+                <input type="number" min="1" placeholder="W" required value={rqForm.width_in}  onChange={e => setRqForm(f => ({ ...f, width_in:  e.target.value }))} />
+                <input type="number" min="1" placeholder="H" required value={rqForm.height_in} onChange={e => setRqForm(f => ({ ...f, height_in: e.target.value }))} />
+              </div>
+            </div>
+          ) : <div />}
+          <button type="submit" disabled={rqLoading} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap' }}>
+            {rqLoading ? 'Getting Rates…' : 'Get Rates'}
+          </button>
+        </form>
+
+        {rqRates.length > 0 && (
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Select a service — click to choose, then Save to Order</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8, marginBottom: 12 }}>
+              {rqRates.map(r => {
+                const selected = rqSelected?.serviceType === r.serviceType;
+                return (
+                  <div key={r.serviceType} onClick={() => setRqSelected(r)} style={{
+                    border: `2px solid ${selected ? 'var(--accent)' : 'var(--border)'}`,
+                    background: selected ? 'var(--accent)11' : 'var(--bg-elevated)',
+                    borderRadius: 8, padding: '10px 14px', cursor: 'pointer',
+                  }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: selected ? 'var(--accent)' : 'var(--text-primary)' }}>
+                      {SERVICE_LABELS[r.serviceType] || r.serviceType}
+                    </div>
+                    <div style={{ fontSize: 18, fontWeight: 700, margin: '4px 0', fontFamily: 'var(--brand-mono)', color: 'var(--success)' }}>
+                      {fmtCurrency(r.netCharge)}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      {r.transitDays ? `${r.transitDays} day${r.transitDays !== '1' ? 's' : ''}` : ''}
+                      {r.deliveryDate ? ` · by ${r.deliveryDate}` : ''}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={saveShippingQuote} disabled={!rqSelected || rqSaving} style={{
+                background: rqSelected ? 'var(--success)' : 'var(--bg-elevated)', color: rqSelected ? '#fff' : 'var(--text-muted)',
+                border: 'none', borderRadius: 8, padding: '8px 22px', fontWeight: 600, fontSize: 13,
+              }}>
+                {rqSaving ? 'Saving…' : rqSelected ? `Add ${fmtCurrency(rqSelected.netCharge)} shipping to order` : 'Select a rate above'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
@@ -444,6 +609,14 @@ export default function OrderDetail() {
                   <span style={{ color: 'var(--text-muted)' }}>Subtotal</span>
                   <span>{fmtCurrency(order.invoice.subtotal)}</span>
                 </div>
+                {parseFloat(order.invoice.shipping_charge) > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                    <span style={{ color: 'var(--text-muted)' }}>
+                      Shipping{shippingQuote?.service_type ? ` (${SERVICE_LABELS[shippingQuote.service_type] || shippingQuote.service_type})` : ''}
+                    </span>
+                    <span>{fmtCurrency(order.invoice.shipping_charge)}</span>
+                  </div>
+                )}
                 {parseFloat(order.invoice.processing_fee) > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                     <span style={{ color: 'var(--text-muted)' }}>CC Fee (3.9%)</span>
@@ -502,7 +675,22 @@ export default function OrderDetail() {
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Invoice paid. Ready to ship.</p>
                 <button onClick={() => {
                   const a = order.patient?.billing_address || {};
-                  setShipForm(f => ({ ...f, recipient_name: order.patient?.name || '', recipient_street: a.street || '', recipient_city: a.city || '', recipient_state: a.state || '', recipient_zip: a.zip || '', recipient_country: a.country || 'US' }));
+                  const q = order.shipping_quote;
+                  setShipForm(f => ({
+                    ...f,
+                    service:           q?.service_type  || 'FEDEX_GROUND',
+                    box_type:          q?.package_type  || 'YOUR_PACKAGING',
+                    weight_lbs:        q?.weight_lbs    || '',
+                    length_in:         q?.length_in     || '',
+                    width_in:          q?.width_in      || '',
+                    height_in:         q?.height_in     || '',
+                    recipient_name:    order.patient?.name || '',
+                    recipient_street:  a.street  || '',
+                    recipient_city:    a.city    || '',
+                    recipient_state:   a.state   || '',
+                    recipient_zip:     a.zip     || '',
+                    recipient_country: a.country || 'US',
+                  }));
                   setShipModal(true);
                 }} style={{
                   background: 'var(--success)', color: '#fff', border: 'none',
@@ -755,7 +943,12 @@ export default function OrderDetail() {
         <form onSubmit={handleShip}>
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Service Type</label>
-            <select value={shipForm.service} onChange={e => setShipForm({ ...shipForm, service: e.target.value })} style={{ width: '100%' }}>
+            <select value={shipForm.service} onChange={e => {
+              const svc = e.target.value;
+              const validPkgs = SERVICE_VALID_PACKAGES[svc] || ['YOUR_PACKAGING'];
+              const box = validPkgs.includes(shipForm.box_type) ? shipForm.box_type : validPkgs[0];
+              setShipForm(f => ({ ...f, service: svc, box_type: box }));
+            }} style={{ width: '100%' }}>
               <optgroup label="Ground">
                 <option value="FEDEX_GROUND">FedEx Ground</option>
                 <option value="FEDEX_HOME_DELIVERY">FedEx Home Delivery</option>
@@ -775,19 +968,37 @@ export default function OrderDetail() {
             </select>
           </div>
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Box Type</label>
-            <select value={shipForm.box_type} onChange={e => setShipForm({ ...shipForm, box_type: e.target.value })} style={{ width: '100%' }}>
-              <option value="FEDEX_ENVELOPE">FedEx Envelope</option>
-              <option value="FEDEX_PAK">FedEx Pak</option>
-              <option value="FEDEX_TUBE">FedEx Tube</option>
-              <option value="FEDEX_SMALL_BOX">FedEx Small Box</option>
-              <option value="FEDEX_MEDIUM_BOX">FedEx Medium Box</option>
-              <option value="FEDEX_LARGE_BOX">FedEx Large Box</option>
-              <option value="FEDEX_EXTRA_LARGE_BOX">FedEx Extra Large Box</option>
-              <option value="FEDEX_10KG_BOX">FedEx 10kg Box</option>
-              <option value="FEDEX_25KG_BOX">FedEx 25kg Box</option>
+            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Box / Package Type</label>
+            <select value={shipForm.box_type} onChange={e => setShipForm(f => ({ ...f, box_type: e.target.value }))} style={{ width: '100%' }}>
+              {(SERVICE_VALID_PACKAGES[shipForm.service] || ['YOUR_PACKAGING']).map(pkg => (
+                <option key={pkg} value={pkg}>{PACKAGE_LABELS[pkg] || pkg}</option>
+              ))}
             </select>
           </div>
+          {shipForm.box_type === 'YOUR_PACKAGING' && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                Package Dimensions (inches) <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>— optional but recommended</span>
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                <div>
+                  <input type="number" min="1" step="0.1" placeholder="Length"
+                    value={shipForm.length_in} onChange={e => setShipForm(f => ({ ...f, length_in: e.target.value }))}
+                    style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <input type="number" min="1" step="0.1" placeholder="Width"
+                    value={shipForm.width_in} onChange={e => setShipForm(f => ({ ...f, width_in: e.target.value }))}
+                    style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <input type="number" min="1" step="0.1" placeholder="Height"
+                    value={shipForm.height_in} onChange={e => setShipForm(f => ({ ...f, height_in: e.target.value }))}
+                    style={{ width: '100%' }} />
+                </div>
+              </div>
+            </div>
+          )}
           <div style={{ marginBottom: 16 }}>
             <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>
               Weight (lbs)

@@ -9,6 +9,7 @@ const { requireLogin } = require('../middleware/auth');
 const { validate, orderSchema, shipSchema, updateItemsSchema } = require('../middleware/validate');
 const { generateInvoicePDF } = require('../services/pdf');
 const fedexService = require('../services/fedex');
+const { SERVICE_VALID_PACKAGES } = fedexService;
 const crypto = require('crypto');
 const { sendShippingNotification, sendInvoiceEmail, sendCustomEmail } = require('../services/mailer');
 const { sendInvoiceSMS, sendShippingSMS, sendCustomSMS } = require('../services/sms');
@@ -390,6 +391,110 @@ router.post('/:id/resend-shipping', requireLogin, async (req, res) => {
     }
 
     return res.json({ ok: true, sent });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+});
+
+// POST /api/orders/:id/rate-quote — get FedEx rate quotes for package+weight+address
+router.post('/:id/rate-quote', requireLogin, async (req, res) => {
+  try {
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
+    if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+    const { package_type, weight_lbs, length_in, width_in, height_in,
+      recipient_street, recipient_city, recipient_state, recipient_zip, recipient_country } = req.body;
+
+    if (!package_type || !weight_lbs) {
+      return res.status(400).json({ error: 'MISSING_FIELDS', message: 'package_type and weight_lbs are required.' });
+    }
+    if (package_type === 'YOUR_PACKAGING' && (!length_in || !width_in || !height_in)) {
+      return res.status(400).json({ error: 'DIMENSIONS_REQUIRED', message: 'L×W×H dimensions are required for YOUR_PACKAGING.' });
+    }
+
+    const addr = patient.billing_address || {};
+    const recipient = {
+      street:  recipient_street  || addr.street  || '',
+      city:    recipient_city    || addr.city    || '',
+      state:   recipient_state   || addr.state   || '',
+      zip:     recipient_zip     || addr.zip     || '',
+      country: recipient_country || addr.country || 'US',
+    };
+
+    const rates = await fedexService.getRates({ package_type, weight_lbs, length_in, width_in, height_in, recipient });
+    return res.json({ rates, valid_packages: SERVICE_VALID_PACKAGES });
+  } catch (err) {
+    if (err.response) {
+      console.error('FedEx rate error:', JSON.stringify(err.response.data, null, 2));
+      return res.status(502).json({ error: 'FEDEX_ERROR', details: err.response.data });
+    }
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+});
+
+// PATCH /api/orders/:id/shipping-quote — save a selected rate quote to the order
+// Also recalculates the invoice total if an unpaid invoice exists.
+router.patch('/:id/shipping-quote', requireLogin, async (req, res) => {
+  try {
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
+    if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const { service_type, package_type, weight_lbs, length_in, width_in, height_in,
+      net_charge, currency, transit_days, delivery_date } = req.body;
+
+    if (!service_type || !package_type || !weight_lbs || net_charge == null) {
+      return res.status(400).json({ error: 'MISSING_FIELDS' });
+    }
+
+    const shipping_quote = {
+      service_type, package_type,
+      weight_lbs: parseFloat(weight_lbs),
+      length_in: length_in ? parseInt(length_in) : null,
+      width_in:  width_in  ? parseInt(width_in)  : null,
+      height_in: height_in ? parseInt(height_in) : null,
+      net_charge: parseFloat(net_charge).toFixed(2),
+      currency: currency || 'USD',
+      transit_days: transit_days || null,
+      delivery_date: delivery_date || null,
+      quoted_at: new Date().toISOString(),
+    };
+
+    const [updatedOrder] = await db.update(sales_orders)
+      .set({ shipping_quote, updated_at: new Date() })
+      .where(eq(sales_orders.id, order.id))
+      .returning();
+
+    // Recalculate unpaid invoice if one exists
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.order_id, order.id));
+    if (invoice && invoice.pay_status !== 'paid') {
+      const shipping = parseFloat(net_charge);
+      const subtotal = parseFloat(invoice.subtotal);
+      const fee = parseFloat(invoice.processing_fee || 0);
+      const newTotal = (subtotal + shipping + fee).toFixed(2);
+
+      const [updatedInvoice] = await db.update(invoices)
+        .set({ shipping_charge: shipping.toFixed(2), total: newTotal, updated_at: new Date() })
+        .where(eq(invoices.id, invoice.id))
+        .returning();
+
+      // Regenerate PDF
+      try {
+        const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+        const items = await db.select({ item: order_items, product_name: products.name })
+          .from(order_items).leftJoin(products, eq(order_items.product_id, products.id))
+          .where(eq(order_items.order_id, order.id));
+        const invoicesDir = path.join(__dirname, '../../uploads/invoices');
+        await generateInvoicePDF({
+          invoice: updatedInvoice, order: updatedOrder, patient,
+          items: items.map(r => ({ ...r.item, product_name: r.product_name })),
+        }, path.join(invoicesDir, `${invoice.id}.pdf`));
+      } catch (pdfErr) { console.error('PDF regen failed:', pdfErr.message); }
+    }
+
+    return res.json({ ok: true, order: updatedOrder });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
