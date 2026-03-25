@@ -6,7 +6,8 @@ const {
 } = require('../db/schema');
 const { eq, desc, and, inArray, sql } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
-const { validate, orderSchema, shipSchema } = require('../middleware/validate');
+const { validate, orderSchema, shipSchema, updateItemsSchema } = require('../middleware/validate');
+const { generateInvoicePDF } = require('../services/pdf');
 const fedexService = require('../services/fedex');
 const crypto = require('crypto');
 const { sendShippingNotification, sendInvoiceEmail, sendCustomEmail } = require('../services/mailer');
@@ -14,7 +15,6 @@ const { sendInvoiceSMS, sendShippingSMS } = require('../services/sms');
 
 function generatePayToken() { return crypto.randomBytes(32).toString('hex'); }
 function payTokenExpiresAt(days = 3) { const d = new Date(); d.setDate(d.getDate() + days); return d; }
-const { generateInvoicePDF } = require('../services/pdf');
 const path = require('path');
 const fs = require('fs');
 
@@ -389,6 +389,86 @@ router.post('/:id/resend-shipping', requireLogin, async (req, res) => {
     }
 
     return res.json({ ok: true, sent });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+});
+
+// PATCH /api/orders/:id/items — replace line items (draft/pending_payment + unpaid only)
+router.patch('/:id/items', requireLogin, validate(updateItemsSchema), async (req, res) => {
+  try {
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
+    if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    if (!['draft', 'pending_payment'].includes(order.status)) {
+      return res.status(400).json({ error: 'CANNOT_EDIT', message: 'Only draft or pending_payment orders can be edited.' });
+    }
+
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.order_id, order.id));
+    if (invoice && invoice.pay_status === 'paid') {
+      return res.status(400).json({ error: 'INVOICE_PAID', message: 'Cannot edit items on a paid order.' });
+    }
+
+    const { items } = req.validated;
+    const productIds = items.map(i => i.product_id);
+    const productRows = await db.select().from(products).where(inArray(products.id, productIds));
+    const productMap = Object.fromEntries(productRows.map(p => [p.id, p]));
+
+    for (const item of items) {
+      if (!productMap[item.product_id]) {
+        return res.status(404).json({ error: 'PRODUCT_NOT_FOUND', product_id: item.product_id });
+      }
+    }
+
+    // Replace all line items
+    await db.delete(order_items).where(eq(order_items.order_id, order.id));
+
+    const itemRows = items.map(item => {
+      const product = productMap[item.product_id];
+      const unit_price = parseFloat(product.unit_price);
+      const line_total = (unit_price * item.quantity).toFixed(2);
+      return { order_id: order.id, product_id: item.product_id, quantity: item.quantity, unit_price: unit_price.toFixed(2), line_total };
+    });
+
+    const insertedItems = await db.insert(order_items).values(itemRows).returning();
+
+    // Recalculate invoice and regenerate PDF if invoice exists
+    if (invoice) {
+      const subtotal = insertedItems.reduce((sum, i) => sum + parseFloat(i.line_total), 0);
+      const fee = parseFloat(invoice.processing_fee || 0);
+      const total = (subtotal + fee).toFixed(2);
+
+      const [updatedInvoice] = await db.update(invoices)
+        .set({ subtotal: subtotal.toFixed(2), total, updated_at: new Date() })
+        .where(eq(invoices.id, invoice.id))
+        .returning();
+
+      try {
+        const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+        const invoicesDir = path.join(__dirname, '../../uploads/invoices');
+        const pdfPath = path.join(invoicesDir, `${invoice.id}.pdf`);
+        await generateInvoicePDF({
+          invoice: updatedInvoice,
+          order,
+          patient,
+          items: insertedItems.map(i => ({ ...i, product_name: productMap[i.product_id].name })),
+        }, pdfPath);
+      } catch (pdfErr) {
+        console.error('PDF regeneration failed:', pdfErr.message);
+      }
+    }
+
+    const newItems = await db.select({
+      item: order_items,
+      product_name: products.name,
+      product_sku: products.sku,
+    })
+      .from(order_items)
+      .leftJoin(products, eq(order_items.product_id, products.id))
+      .where(eq(order_items.order_id, order.id));
+
+    return res.json({ items: newItems.map(r => ({ ...r.item, product_name: r.product_name, product_sku: r.product_sku })) });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });

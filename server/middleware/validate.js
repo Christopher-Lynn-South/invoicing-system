@@ -56,6 +56,10 @@ const orderSchema = z.object({
   notes: z.string().optional(),
 });
 
+const updateItemsSchema = z.object({
+  items: z.array(orderItemSchema).min(1),
+});
+
 const payIntentSchema = z.object({
   method: z.enum(['stripe_cc', 'ach', 'usdc']),
 });
@@ -118,6 +122,7 @@ module.exports = {
   patientSchema,
   productSchema,
   orderSchema,
+  updateItemsSchema,
   payIntentSchema,
   usdcConfirmSchema,
   shipSchema,

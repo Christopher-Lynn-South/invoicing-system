@@ -49,6 +49,12 @@ export default function OrderDetail() {
   const [generatingInvoice, setGeneratingInvoice] = useState(false);
   const [resendingInvoice, setResendingInvoice] = useState(false);
   const [resendingShipping, setResendingShipping] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editItems, setEditItems] = useState([]);
+  const [allProducts, setAllProducts] = useState([]);
+  const [addProductId, setAddProductId] = useState('');
+  const [addQty, setAddQty] = useState(1);
+  const [savingItems, setSavingItems] = useState(false);
   const [newNote, setNewNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
   const [emailTemplate, setEmailTemplate] = useState('custom');
@@ -132,6 +138,59 @@ export default function OrderDetail() {
       addToast(err.response?.data?.message || 'Resend failed', 'error');
     }
     setResendingShipping(false);
+  }
+
+  async function enterEditMode() {
+    if (!allProducts.length) {
+      try {
+        const { data } = await api.get('/products');
+        setAllProducts(data.filter(p => p.active !== false));
+      } catch {
+        addToast('Failed to load products', 'error');
+        return;
+      }
+    }
+    setEditItems(order.items.map(i => ({ product_id: i.product_id, quantity: i.quantity, product_name: i.product_name, unit_price: i.unit_price })));
+    setAddProductId('');
+    setAddQty(1);
+    setEditMode(true);
+  }
+
+  function editQty(idx, val) {
+    const qty = Math.max(1, parseInt(val) || 1);
+    setEditItems(prev => prev.map((it, i) => i === idx ? { ...it, quantity: qty } : it));
+  }
+
+  function removeEditItem(idx) {
+    setEditItems(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  function addEditItem() {
+    if (!addProductId) return;
+    const product = allProducts.find(p => p.id === addProductId);
+    if (!product) return;
+    const existing = editItems.findIndex(i => i.product_id === addProductId);
+    if (existing >= 0) {
+      setEditItems(prev => prev.map((it, i) => i === existing ? { ...it, quantity: it.quantity + addQty } : it));
+    } else {
+      setEditItems(prev => [...prev, { product_id: product.id, quantity: addQty, product_name: product.name, unit_price: product.unit_price }]);
+    }
+    setAddProductId('');
+    setAddQty(1);
+  }
+
+  async function saveItems() {
+    if (!editItems.length) { addToast('Order must have at least one item', 'error'); return; }
+    setSavingItems(true);
+    try {
+      await api.patch(`/orders/${id}/items`, { items: editItems.map(i => ({ product_id: i.product_id, quantity: i.quantity })) });
+      addToast('Order updated', 'success');
+      setEditMode(false);
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to save', 'error');
+    }
+    setSavingItems(false);
   }
 
   function parseNotes(text) {
@@ -229,7 +288,11 @@ export default function OrderDetail() {
   const hasInvoice = !!order.invoice;
   const hasShipment = !!order.shipment;
 
+  const isEditable = ['draft', 'pending_payment'].includes(order.status) &&
+    (!order.invoice || order.invoice.pay_status === 'pending');
+
   const subtotal = order.items.reduce((sum, i) => sum + parseFloat(i.line_total), 0);
+  const editSubtotal = editItems.reduce((sum, i) => sum + parseFloat(i.unit_price) * i.quantity, 0);
 
   return (
     <div>
@@ -260,31 +323,121 @@ export default function OrderDetail() {
         {/* Left: Line Items + Invoice */}
         <div>
           <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 20 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Line Items</h2>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                  <th style={{ textAlign: 'left', paddingBottom: 8 }}>Product</th>
-                  <th style={{ textAlign: 'right', paddingBottom: 8 }}>Qty</th>
-                  <th style={{ textAlign: 'right', paddingBottom: 8 }}>Price</th>
-                  <th style={{ textAlign: 'right', paddingBottom: 8 }}>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {order.items.map(item => (
-                  <tr key={item.id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '8px 0' }}>{item.product_name}</td>
-                    <td style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-muted)' }}>{item.quantity}</td>
-                    <td style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtCurrency(item.unit_price)}</td>
-                    <td style={{ padding: '8px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)' }}>{fmtCurrency(item.line_total)}</td>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 600 }}>Line Items</h2>
+              {isEditable && !editMode && (
+                <button onClick={enterEditMode} style={{
+                  background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)',
+                  borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer',
+                }}>✏ Edit Items</button>
+              )}
+            </div>
+
+            {!editMode ? (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                <thead>
+                  <tr style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                    <th style={{ textAlign: 'left', paddingBottom: 8 }}>Product</th>
+                    <th style={{ textAlign: 'right', paddingBottom: 8 }}>Qty</th>
+                    <th style={{ textAlign: 'right', paddingBottom: 8 }}>Price</th>
+                    <th style={{ textAlign: 'right', paddingBottom: 8 }}>Total</th>
                   </tr>
-                ))}
-                <tr style={{ borderTop: '1px solid var(--border)' }}>
-                  <td colSpan={3} style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-muted)' }}>Subtotal</td>
-                  <td style={{ padding: '8px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', fontWeight: 600 }}>{fmtCurrency(subtotal)}</td>
-                </tr>
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {order.items.map(item => (
+                    <tr key={item.id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 0' }}>{item.product_name}</td>
+                      <td style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-muted)' }}>{item.quantity}</td>
+                      <td style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtCurrency(item.unit_price)}</td>
+                      <td style={{ padding: '8px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)' }}>{fmtCurrency(item.line_total)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ borderTop: '1px solid var(--border)' }}>
+                    <td colSpan={3} style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-muted)' }}>Subtotal</td>
+                    <td style={{ padding: '8px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', fontWeight: 600 }}>{fmtCurrency(subtotal)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            ) : (
+              <div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      <th style={{ textAlign: 'left', paddingBottom: 8 }}>Product</th>
+                      <th style={{ textAlign: 'right', paddingBottom: 8, width: 72 }}>Qty</th>
+                      <th style={{ textAlign: 'right', paddingBottom: 8 }}>Price</th>
+                      <th style={{ textAlign: 'right', paddingBottom: 8 }}>Total</th>
+                      <th style={{ paddingBottom: 8, width: 28 }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {editItems.map((item, idx) => (
+                      <tr key={item.product_id} style={{ borderTop: '1px solid var(--border)' }}>
+                        <td style={{ padding: '6px 0' }}>{item.product_name}</td>
+                        <td style={{ padding: '6px 0', textAlign: 'right' }}>
+                          <input
+                            type="number" min="1" value={item.quantity}
+                            onChange={e => editQty(idx, e.target.value)}
+                            style={{ width: 56, textAlign: 'right', padding: '2px 6px', fontSize: 13 }}
+                          />
+                        </td>
+                        <td style={{ padding: '6px 0', textAlign: 'right', color: 'var(--text-muted)' }}>{fmtCurrency(item.unit_price)}</td>
+                        <td style={{ padding: '6px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)' }}>
+                          {fmtCurrency(parseFloat(item.unit_price) * item.quantity)}
+                        </td>
+                        <td style={{ padding: '6px 0', textAlign: 'center' }}>
+                          <button onClick={() => removeEditItem(idx)} title="Remove" style={{
+                            background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: 16, lineHeight: 1,
+                          }}>×</button>
+                        </td>
+                      </tr>
+                    ))}
+                    <tr style={{ borderTop: '1px solid var(--border)' }}>
+                      <td colSpan={3} style={{ padding: '8px 0', textAlign: 'right', color: 'var(--text-muted)' }}>Subtotal</td>
+                      <td style={{ padding: '8px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', fontWeight: 600 }}>{fmtCurrency(editSubtotal)}</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {/* Add product row */}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, paddingTop: 12, borderTop: '1px dashed var(--border)' }}>
+                  <select
+                    value={addProductId}
+                    onChange={e => setAddProductId(e.target.value)}
+                    style={{ flex: 1, fontSize: 13 }}
+                  >
+                    <option value="">— Add product —</option>
+                    {allProducts.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} ({fmtCurrency(p.unit_price)})</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number" min="1" value={addQty} onChange={e => setAddQty(Math.max(1, parseInt(e.target.value) || 1))}
+                    style={{ width: 56, textAlign: 'right', fontSize: 13, padding: '4px 6px' }}
+                  />
+                  <button onClick={addEditItem} disabled={!addProductId} style={{
+                    background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6,
+                    padding: '4px 12px', fontSize: 13, cursor: addProductId ? 'pointer' : 'default', color: 'var(--text-secondary)',
+                  }}>+ Add</button>
+                </div>
+
+                {/* Save / Cancel */}
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+                  <button onClick={() => setEditMode(false)} style={{
+                    background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)',
+                    borderRadius: 8, padding: '6px 18px', fontSize: 13, cursor: 'pointer',
+                  }}>Cancel</button>
+                  <button onClick={saveItems} disabled={savingItems || !editItems.length} style={{
+                    background: 'var(--accent)', color: '#fff', border: 'none',
+                    borderRadius: 8, padding: '6px 20px', fontSize: 13, fontWeight: 600,
+                    opacity: !editItems.length ? 0.5 : 1,
+                  }}>
+                    {savingItems ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Invoice panel */}
