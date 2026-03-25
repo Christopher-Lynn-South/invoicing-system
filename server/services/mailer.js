@@ -105,28 +105,19 @@ async function sendInvoiceEmail(patient, order, invoice) {
   });
 }
 
-async function sendPaymentConfirmation(patient, order, invoice, method) {
+async function sendPaymentConfirmation(patient, order, invoice) {
   const { to, cc } = await getRecipients(patient.id, patient.email);
   if (!to) return;
-  const methodLabel = { stripe_cc: 'Credit Card', ach: 'ACH Bank Transfer', usdc: 'USDC (Polygon)' }[method] || method;
-  const subjects = {
-    stripe_cc: `Payment received — Order ${order.order_number} confirmed`,
-    ach: `ACH payment confirmed — Order ${order.order_number}`,
-    usdc: `USDC payment confirmed — Order ${order.order_number}`,
-  };
+  const { getTemplate, renderTemplate } = require('./email-templates');
+  const template = getTemplate('payment_thank_you');
+  const { subject, body } = renderTemplate(template, { order, patient, invoice, shipment: null });
+  const htmlBody = body.split('\n').map(line => line.trim() ? `<p>${escapeHtml(line)}</p>` : '').join('');
   await getTransporter().sendMail({
     from: getFrom(),
     to,
     cc: cc.length ? cc : undefined,
-    subject: subjects[method] || `Payment confirmed — Order ${order.order_number}`,
-    html: htmlWrap(`
-      <h2>Payment Confirmed</h2>
-      <p>Dear ${patient.name},</p>
-      <p>We have received your payment of <strong>$${parseFloat(invoice.total).toFixed(2)} USD</strong> for order <strong>${order.order_number}</strong>.</p>
-      <p>Payment method: ${methodLabel}</p>
-      <p>Your order is now being prepared for shipment.</p>
-      <div class="footer">${getCompanyName()} · ${getCompanyEmail()}</div>
-    `),
+    subject,
+    html: htmlWrap(`${htmlBody}<div class="footer">${escapeHtml(getCompanyName())} · ${escapeHtml(getCompanyEmail())}</div>`),
   });
 }
 
@@ -234,6 +225,7 @@ function escapeHtml(str) {
 }
 
 // Staff-composed email to a patient — plain-text body rendered as HTML paragraphs
+// Templates already include their own greeting; do not add one here.
 async function sendCustomEmail(patient, order, { subject, body }) {
   const { to, cc } = await getRecipients(patient.id, patient.email);
   if (!to) return;
@@ -246,12 +238,7 @@ async function sendCustomEmail(patient, order, { subject, body }) {
     to,
     cc: cc.length ? cc : undefined,
     subject,
-    html: htmlWrap(`
-      <h2>${escapeHtml(subject)}</h2>
-      <p>Dear ${escapeHtml(patient.name)},</p>
-      ${htmlBody}
-      <div class="footer">${escapeHtml(getCompanyName())} · ${escapeHtml(getCompanyEmail())} · Re: Order ${escapeHtml(order.order_number)}</div>
-    `),
+    html: htmlWrap(`${htmlBody}<div class="footer">${escapeHtml(getCompanyName())} · ${escapeHtml(getCompanyEmail())}</div>`),
   });
 }
 

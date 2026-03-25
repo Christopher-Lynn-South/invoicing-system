@@ -57,9 +57,11 @@ export default function OrderDetail() {
   const [savingItems, setSavingItems] = useState(false);
   const [newNote, setNewNote] = useState('');
   const [savingNote, setSavingNote] = useState(false);
-  const [emailTemplate, setEmailTemplate] = useState('custom');
+  const [emailTemplate, setEmailTemplate] = useState('');
   const [emailSubject, setEmailSubject] = useState('');
   const [emailBody, setEmailBody] = useState('');
+  const [emailChannel, setEmailChannel] = useState('email');
+  const [emailTemplates, setEmailTemplates] = useState([]);
   const [sendingEmail, setSendingEmail] = useState(false);
 
   async function load() {
@@ -70,7 +72,14 @@ export default function OrderDetail() {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [id]);
+  async function loadEmailTemplates() {
+    try {
+      const { data } = await api.get(`/orders/${id}/email-templates`);
+      setEmailTemplates(data);
+    } catch { /* non-fatal */ }
+  }
+
+  useEffect(() => { load(); loadEmailTemplates(); }, [id]);
 
   async function generateInvoice() {
     setGeneratingInvoice(true);
@@ -201,43 +210,6 @@ export default function OrderDetail() {
     });
   }
 
-  function getTemplateDefaults(template, ord) {
-    const inv = ord.invoice;
-    const ship = ord.shipment;
-    if (template === 'transaction') {
-      return {
-        subject: `Payment confirmation — Order ${ord.order_number}`,
-        body: [
-          `Your payment for order ${ord.order_number} has been received.`,
-          '',
-          inv ? `Invoice #: ${inv.invoice_number}` : '',
-          inv ? `Order Total: $${parseFloat(inv.total).toFixed(2)} USD` : '',
-          inv?.pay_method ? `Payment Method: ${inv.pay_method.replace(/_/g, ' ').toUpperCase()}` : '',
-          '',
-          'Thank you for your business. Your order is being prepared for shipment.',
-        ].filter(l => l !== undefined).join('\n'),
-      };
-    }
-    if (template === 'shipping') {
-      return {
-        subject: `Your order ${ord.order_number} has shipped`,
-        body: [
-          `Your order ${ord.order_number} has been shipped via FedEx.`,
-          '',
-          ship ? `Tracking Number: ${ship.fedex_tracking_number}` : '',
-          ship ? `Service: ${ship.service_type}` : '',
-          ship?.estimated_delivery ? `Estimated Delivery: ${ship.estimated_delivery}` : '',
-          '',
-          'Shipping Instructions:',
-          '(Edit this section with any special handling instructions for the recipient.)',
-          '',
-          ship ? `Track your package: https://www.fedex.com/fedextrack/?tracknumbers=${ship.fedex_tracking_number}` : '',
-        ].filter(l => l !== undefined).join('\n'),
-      };
-    }
-    return { subject: '', body: '' };
-  }
-
   async function saveNote(e) {
     e.preventDefault();
     if (!newNote.trim()) return;
@@ -253,18 +225,25 @@ export default function OrderDetail() {
     setSavingNote(false);
   }
 
-  async function sendEmail(e) {
+  async function sendMessage(e) {
     e.preventDefault();
     setSendingEmail(true);
     try {
-      await api.post(`/orders/${id}/send-email`, { subject: emailSubject, body: emailBody });
-      addToast('Email sent to client', 'success');
+      const { data } = await api.post(`/orders/${id}/send-email`, {
+        subject: emailSubject,
+        body: emailBody,
+        channels: emailChannel,
+      });
+      const parts = [];
+      if (data.sent?.email) parts.push('email ✓');
+      if (data.sent?.sms) parts.push('SMS ✓');
+      addToast(parts.length ? `Sent: ${parts.join(' · ')}` : 'Message sent', 'success');
       setEmailSubject('');
       setEmailBody('');
-      setEmailTemplate('custom');
+      setEmailTemplate('');
       load();
     } catch (err) {
-      addToast(err.response?.data?.message || 'Failed to send email', 'error');
+      addToast(err.response?.data?.message || 'Failed to send', 'error');
     }
     setSendingEmail(false);
   }
@@ -662,46 +641,92 @@ export default function OrderDetail() {
           </form>
         </div>
 
-        {/* Email Client */}
+        {/* Message Client */}
         <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20 }}>
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Email Client</h2>
-          {!order.patient?.email ? (
-            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No email address on file for this patient.</p>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Message Client</h2>
+          {!order.patient?.email && !order.patient?.phone ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>No email or phone on file for this patient.</p>
           ) : (
-            <form onSubmit={sendEmail}>
+            <form onSubmit={sendMessage}>
+              {/* Template picker */}
               <div style={{ marginBottom: 10 }}>
                 <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Template</label>
                 <select
                   value={emailTemplate}
                   onChange={e => {
-                    const t = e.target.value;
-                    setEmailTemplate(t);
-                    const defaults = getTemplateDefaults(t, order);
-                    setEmailSubject(defaults.subject);
-                    setEmailBody(defaults.body);
+                    const tid = e.target.value;
+                    setEmailTemplate(tid);
+                    const t = emailTemplates.find(x => x.id === tid);
+                    if (t) { setEmailSubject(t.subject); setEmailBody(t.body); }
+                    else { setEmailSubject(''); setEmailBody(''); }
                   }}
                   style={{ width: '100%' }}
                 >
-                  <option value="custom">Custom message</option>
-                  <option value="transaction">Transaction summary</option>
-                  {hasShipment && <option value="shipping">Shipping notice + instructions</option>}
+                  <option value="">— Custom message —</option>
+                  {emailTemplates.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
                 </select>
               </div>
-              <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-muted)' }}>
-                To: <span style={{ color: 'var(--text-primary)', fontFamily: 'var(--brand-mono)' }}>{order.patient.email}</span>
-              </div>
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Subject</label>
-                <input
-                  value={emailSubject}
-                  onChange={e => setEmailSubject(e.target.value)}
-                  placeholder="Subject line"
-                  required
-                  style={{ width: '100%' }}
-                />
-              </div>
+
+              {/* Channel selector */}
               <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Message</label>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Send via</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[['email', '✉ Email'], ['sms', '💬 SMS'], ['both', '✉ + 💬 Both']].map(([val, label]) => (
+                    <button key={val} type="button" onClick={() => setEmailChannel(val)} style={{
+                      padding: '5px 12px', fontSize: 12, borderRadius: 6, border: '1px solid',
+                      borderColor: emailChannel === val ? 'var(--accent)' : 'var(--border)',
+                      background: emailChannel === val ? 'var(--accent)22' : 'none',
+                      color: emailChannel === val ? 'var(--accent)' : 'var(--text-secondary)',
+                      cursor: 'pointer', fontWeight: emailChannel === val ? 600 : 400,
+                    }}>{label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recipient info */}
+              <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.8 }}>
+                {(emailChannel === 'email' || emailChannel === 'both') && (
+                  <div>
+                    Email: {order.patient?.email
+                      ? <span style={{ color: 'var(--text-primary)', fontFamily: 'var(--brand-mono)' }}>{order.patient.email}</span>
+                      : <span style={{ color: 'var(--danger)' }}>no email on file</span>}
+                  </div>
+                )}
+                {(emailChannel === 'sms' || emailChannel === 'both') && (
+                  <div>
+                    SMS: {order.patient?.phone
+                      ? <span style={{ color: 'var(--text-primary)', fontFamily: 'var(--brand-mono)' }}>{order.patient.phone}</span>
+                      : <span style={{ color: 'var(--danger)' }}>no phone on file — SMS will be skipped</span>}
+                  </div>
+                )}
+              </div>
+
+              {/* Subject — only needed for email */}
+              {(emailChannel === 'email' || emailChannel === 'both') && (
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Subject</label>
+                  <input
+                    value={emailSubject}
+                    onChange={e => setEmailSubject(e.target.value)}
+                    placeholder="Subject line"
+                    required={emailChannel !== 'sms'}
+                    style={{ width: '100%' }}
+                  />
+                </div>
+              )}
+
+              {/* Body */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+                  Message
+                  {(emailChannel === 'sms' || emailChannel === 'both') && (
+                    <span style={{ marginLeft: 8, fontWeight: 400 }}>
+                      · SMS will be prefixed with company name + order #
+                    </span>
+                  )}
+                </label>
                 <textarea
                   value={emailBody}
                   onChange={e => setEmailBody(e.target.value)}
@@ -711,12 +736,13 @@ export default function OrderDetail() {
                   style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 13, boxSizing: 'border-box' }}
                 />
               </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <button type="submit" disabled={sendingEmail} style={{
                   background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8,
                   padding: '8px 22px', fontSize: 13, fontWeight: 600,
                 }}>
-                  {sendingEmail ? 'Sending…' : '→ Send Email'}
+                  {sendingEmail ? 'Sending…' : `→ Send ${emailChannel === 'email' ? 'Email' : emailChannel === 'sms' ? 'SMS' : 'Email + SMS'}`}
                 </button>
               </div>
             </form>

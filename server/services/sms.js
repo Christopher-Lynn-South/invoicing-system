@@ -71,4 +71,16 @@ async function sendShippingSMS(patient, order, shipment) {
   }
 }
 
-module.exports = { sendInvoiceSMS, sendShippingSMS };
+async function sendCustomSMS(patient, order, message) {
+  if (!patient.phone) return false;
+  const companyName = getCompanyName();
+  const fullMessage = `[${companyName}] Order ${order.order_number}: ${message}`;
+  try {
+    return await sendSMS(patient.phone, fullMessage.substring(0, 1600));
+  } catch (err) {
+    console.error('Custom SMS failed:', err.message);
+    return false;
+  }
+}
+
+module.exports = { sendInvoiceSMS, sendShippingSMS, sendCustomSMS };

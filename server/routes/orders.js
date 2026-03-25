@@ -11,7 +11,8 @@ const { generateInvoicePDF } = require('../services/pdf');
 const fedexService = require('../services/fedex');
 const crypto = require('crypto');
 const { sendShippingNotification, sendInvoiceEmail, sendCustomEmail } = require('../services/mailer');
-const { sendInvoiceSMS, sendShippingSMS } = require('../services/sms');
+const { sendInvoiceSMS, sendShippingSMS, sendCustomSMS } = require('../services/sms');
+const { renderAllForOrder } = require('../services/email-templates');
 
 function generatePayToken() { return crypto.randomBytes(32).toString('hex'); }
 function payTokenExpiresAt(days = 3) { const d = new Date(); d.setDate(d.getDate() + days); return d; }
@@ -475,6 +476,23 @@ router.patch('/:id/items', requireLogin, validate(updateItemsSchema), async (req
   }
 });
 
+// GET /api/orders/:id/email-templates — rendered templates for this order
+router.get('/:id/email-templates', requireLogin, async (req, res) => {
+  try {
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
+    if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.order_id, order.id));
+    const [shipment] = await db.select().from(shipments).where(eq(shipments.order_id, order.id));
+
+    return res.json(renderAllForOrder({ order, patient, invoice: invoice || null, shipment: shipment || null }));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
 // POST /api/orders/:id/notes  — append a staff note to the order
 router.post('/:id/notes', requireLogin, async (req, res) => {
   try {
@@ -500,31 +518,46 @@ router.post('/:id/notes', requireLogin, async (req, res) => {
   }
 });
 
-// POST /api/orders/:id/send-email  — send a custom email to the patient
+// POST /api/orders/:id/send-email  — send email and/or SMS to the patient
+// channels: 'email' | 'sms' | 'both'  (default: 'email')
 router.post('/:id/send-email', requireLogin, async (req, res) => {
   try {
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
     if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
 
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
-    if (!patient?.email) return res.status(400).json({ error: 'NO_EMAIL', message: 'Patient has no email address on file.' });
 
     const subject = (req.body.subject || '').trim();
     const body = (req.body.body || '').trim();
-    if (!subject) return res.status(400).json({ error: 'SUBJECT_REQUIRED' });
+    const channels = ['email', 'sms', 'both'].includes(req.body.channels) ? req.body.channels : 'email';
+
     if (!body) return res.status(400).json({ error: 'BODY_REQUIRED' });
+    if ((channels === 'email' || channels === 'both') && !subject) {
+      return res.status(400).json({ error: 'SUBJECT_REQUIRED' });
+    }
 
-    await sendCustomEmail(patient, order, { subject, body });
+    const sent = { email: false, sms: false };
 
-    // Auto-log a note that the email was sent
+    if (channels === 'email' || channels === 'both') {
+      if (!patient?.email) return res.status(400).json({ error: 'NO_EMAIL', message: 'Patient has no email address on file.' });
+      await sendCustomEmail(patient, order, { subject, body });
+      sent.email = true;
+    }
+
+    if (channels === 'sms' || channels === 'both') {
+      sent.sms = await sendCustomSMS(patient, order, body);
+    }
+
+    // Auto-log a note
+    const channelDesc = [sent.email && 'email', sent.sms && 'SMS'].filter(Boolean).join('+') || channels;
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
-    const entry = `[Staff ${timestamp}]: Email sent — "${subject}"`;
+    const entry = `[Staff ${timestamp}]: Message sent via ${channelDesc}${subject ? ` — "${subject}"` : ''}`;
     const newNotes = order.notes ? `${order.notes}\n${entry}` : entry;
     await db.update(sales_orders)
       .set({ notes: newNotes, updated_at: new Date() })
       .where(eq(sales_orders.id, req.params.id));
 
-    return res.json({ ok: true });
+    return res.json({ ok: true, sent });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
