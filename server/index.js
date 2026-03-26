@@ -83,6 +83,7 @@ app.use('/api', require('./routes/invoices'));          // mounts /api/orders/:i
 app.use('/api/pay', require('./routes/payments'));
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/reorder', require('./routes/reminders'));
+app.use('/api/import', require('./routes/import'));
 
 // ─── Health checks ────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

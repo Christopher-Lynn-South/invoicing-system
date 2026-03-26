@@ -19,6 +19,7 @@ import Patients from './pages/Patients';
 import PatientDetail from './pages/PatientDetail';
 import Products from './pages/Products';
 import Settings from './pages/Settings';
+import Import from './pages/Import';
 import PayPage from './pages/PayPage';
 
 function RequireAuth({ children }) {
@@ -89,6 +90,7 @@ export default function App() {
           <Route path="patients/:id" element={<PatientDetail />} />
           <Route path="products" element={<Products />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="import" element={<Import />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { to: '/patients', label: 'Patients', icon: '👤' },
   { to: '/products', label: 'Products', icon: '📦' },
   { to: '/settings', label: 'Settings', icon: '⚙' },
+  { to: '/import', label: 'Import', icon: '📥' },
 ];
 
 export default function Layout() {

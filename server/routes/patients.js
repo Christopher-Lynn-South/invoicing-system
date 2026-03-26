@@ -11,6 +11,28 @@ const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
+const COUNTRY_MAP = {
+  'united states': 'US', 'united states of america': 'US', 'usa': 'US', 'u.s.a.': 'US', 'u.s.': 'US',
+  'mexico': 'MX', 'méxico': 'MX', 'mex': 'MX',
+  'canada': 'CA', 'united kingdom': 'GB', 'uk': 'GB',
+  'spain': 'ES', 'españa': 'ES', 'germany': 'DE', 'france': 'FR',
+};
+
+function normalizeAddress(addr) {
+  if (!addr) return addr;
+  const country = addr.country?.trim();
+  if (!country) return addr;
+  const normalized = COUNTRY_MAP[country.toLowerCase()];
+  return normalized ? { ...addr, country: normalized } : addr;
+}
+
+function normalizePatient(data) {
+  const result = { ...data };
+  if (result.billing_address)  result.billing_address  = normalizeAddress(result.billing_address);
+  if (result.shipping_address) result.shipping_address = normalizeAddress(result.shipping_address);
+  return result;
+}
+
 const ALLOWED_MIME = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/tiff'];
 const RX_BASE = process.env.RX_STORAGE_PATH || '/var/orderflow/prescriptions';
 
@@ -50,7 +72,7 @@ router.get('/', requireLogin, async (req, res) => {
 // POST /api/patients
 router.post('/', requireLogin, validate(patientSchema), async (req, res) => {
   try {
-    const [row] = await db.insert(patients).values(req.validated).returning();
+    const [row] = await db.insert(patients).values(normalizePatient(req.validated)).returning();
     return res.status(201).json(row);
   } catch (err) {
     if (err.code === '23505') {
@@ -85,7 +107,7 @@ router.get('/:id', requireLogin, async (req, res) => {
 router.put('/:id', requireLogin, validate(patientSchema.partial()), async (req, res) => {
   try {
     const [row] = await db.update(patients)
-      .set({ ...req.validated, updated_at: new Date() })
+      .set({ ...normalizePatient(req.validated), updated_at: new Date() })
       .where(eq(patients.id, req.params.id))
       .returning();
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
