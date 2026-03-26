@@ -10,6 +10,7 @@ export default function Patients() {
   const fetchPatients = useOrderStore(s => s.fetchPatients);
   const addToast = useOrderStore(s => s.addToast);
   const [showNew, setShowNew] = useState(false);
+  const [search, setSearch] = useState('');
   const [form, setForm] = useState({ name: '', email: '', phone: '', date_of_birth: '', billing_address: { street: '', city: '', state: '', zip: '', country: 'US' } });
 
   useEffect(() => { fetchPatients(); }, []);
@@ -32,9 +33,19 @@ export default function Patients() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 28 }}>Patients</h1>
         <button onClick={() => setShowNew(true)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontWeight: 600, fontSize: 14 }}>+ New Patient</button>
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <input
+          type="search"
+          placeholder="Search by name, email, or phone…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ width: '100%', maxWidth: 400, padding: '9px 14px', borderRadius: 8, border: '1px solid var(--border)', fontSize: 14, background: 'var(--bg-surface)', color: 'var(--text-primary)' }}
+        />
       </div>
 
       <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
@@ -49,9 +60,21 @@ export default function Patients() {
             </tr>
           </thead>
           <tbody>
-            {patients.length === 0 ? (
-              <tr><td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No patients yet</td></tr>
-            ) : patients.map(p => (
+            {(() => {
+              const q = search.trim().toLowerCase();
+              const filtered = q
+                ? patients.filter(p =>
+                    p.name?.toLowerCase().includes(q) ||
+                    p.email?.toLowerCase().includes(q) ||
+                    p.phone?.toLowerCase().includes(q)
+                  )
+                : patients;
+              if (filtered.length === 0) return (
+                <tr><td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>
+                  {q ? 'No patients match your search' : 'No patients yet'}
+                </td></tr>
+              );
+              return filtered.map(p => (
               <tr key={p.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '12px 16px' }}>
                   <Link to={`/patients/${p.id}`} style={{ fontWeight: 600 }}>{p.name}</Link>
@@ -67,7 +90,8 @@ export default function Patients() {
                     : <span className="badge badge-draft">No</span>}
                 </td>
               </tr>
-            ))}
+              ));
+            })()}
           </tbody>
         </table>
       </div>
