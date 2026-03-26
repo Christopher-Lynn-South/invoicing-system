@@ -147,12 +147,14 @@ export default function Import() {
       <details style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
         <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 14 }}>📖 How to export from Zoho</summary>
         <div style={{ marginTop: 12, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.9 }}>
-          <div><strong>Customers (accounts.csv):</strong> Zoho CRM → Contacts → Export all, or Zoho Books → Customers → Export</div>
-          <div><strong>Products (items.csv):</strong> Zoho Books / Inventory → Items → Export</div>
-          <div><strong>Sales Orders (sales_orders.csv):</strong> Zoho Books → Sales Orders → Export (detail view with line items)</div>
-          <div><strong>Invoices (invoices.csv):</strong> Zoho Books → Invoices → Export</div>
-          <div><strong>Shipments (packages.csv):</strong> Zoho Inventory → Packages or Shipments → Export</div>
+          <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>Recommended import order:</div>
+          <div><strong>1. Customers (accounts.csv):</strong> Zoho CRM → Contacts → Export all, or Zoho Books → Customers → Export</div>
+          <div><strong>2. Products (items.csv):</strong> Zoho Books / Inventory → Items → Export</div>
+          <div><strong>3. Sales Orders (sales_orders.csv):</strong> Zoho Books → Sales Orders → Export (detail view with line items)</div>
+          <div><strong>4. Shipments (packages.csv):</strong> Zoho Inventory → Packages or Shipments → Export</div>
+          <div><strong>5. Invoices (invoices.csv):</strong> Zoho Books → Invoices → Export</div>
           <div style={{ marginTop: 8, color: 'var(--text-muted)', fontSize: 12 }}>
+            You can upload multiple files at once or one at a time. Sales orders must be imported before shipments and invoices.
             Always export as CSV. Column names do not need to match exactly — the importer recognises common Zoho field names automatically.
           </div>
         </div>
