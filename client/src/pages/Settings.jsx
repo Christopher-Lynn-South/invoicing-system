@@ -323,6 +323,10 @@ export default function Settings() {
   const [testEmail, setTestEmail] = useState('');
   const [testMsg, setTestMsg] = useState('');
 
+  // FedEx diagnostics
+  const [fedexTesting, setFedexTesting] = useState(false);
+  const [fedexSteps, setFedexSteps] = useState([]);
+
   useEffect(() => {
     api.get('/settings/config')
       .then(r => { setConfig(r.data); setConfigLoaded(true); })
@@ -372,6 +376,18 @@ export default function Settings() {
     }
   }
 
+  async function handleTestFedex() {
+    setFedexTesting(true);
+    setFedexSteps([]);
+    try {
+      const { data } = await api.post('/settings/test-fedex');
+      setFedexSteps(data.steps || []);
+    } catch (err) {
+      setFedexSteps([{ name: 'Request', ok: false, detail: err.response?.data?.error || err.message }]);
+    }
+    setFedexTesting(false);
+  }
+
   return (
     <div>
       <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 28, marginBottom: 24 }}>Settings</h1>
@@ -381,6 +397,7 @@ export default function Settings() {
       {configLoaded && SECTIONS.map(section => {
         const ss = sectionState[section.key] || {};
         const isEmail = section.key === 'email';
+        const isFedex = section.key === 'fedex';
         return (
           <ConfigSection
             key={section.key}
@@ -409,6 +426,59 @@ export default function Settings() {
                 </button>
                 {testMsg && <span style={{ fontSize: 13, color: testMsg.startsWith('✓') ? 'var(--success)' : 'var(--danger)' }}>{testMsg}</span>}
               </form>
+            )}
+            {isFedex && (
+              <div style={{ margin: '8px 0 12px' }}>
+                <button
+                  type="button"
+                  onClick={handleTestFedex}
+                  disabled={fedexTesting}
+                  style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--text-primary)', opacity: fedexTesting ? 0.6 : 1 }}
+                >
+                  {fedexTesting ? 'Running diagnostics…' : '🔍 Test FedEx Connection'}
+                </button>
+                {fedexSteps.length > 0 && (
+                  <div style={{ marginTop: 12, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                    {fedexSteps.map((step, i) => (
+                      <div key={i} style={{
+                        padding: '10px 14px',
+                        borderBottom: i < fedexSteps.length - 1 ? '1px solid var(--border)' : 'none',
+                        background: step.ok ? 'var(--bg-surface)' : '#ef444411',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                          <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>{step.ok ? '✅' : '❌'}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: step.ok ? 'var(--text-primary)' : 'var(--danger)' }}>
+                              {step.name}
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, wordBreak: 'break-word' }}>
+                              {step.detail}
+                            </div>
+                            {step.raw && (
+                              <details style={{ marginTop: 6 }}>
+                                <summary style={{ fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Raw FedEx response</summary>
+                                <pre style={{
+                                  marginTop: 6, padding: 10, background: 'var(--bg-elevated)',
+                                  borderRadius: 6, fontSize: 11, overflowX: 'auto',
+                                  whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                                  color: 'var(--danger)',
+                                }}>
+                                  {JSON.stringify(step.raw, null, 2)}
+                                </pre>
+                              </details>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {fedexSteps.every(s => s.ok) && (
+                      <div style={{ padding: '10px 14px', background: '#22c55e11', fontSize: 13, color: 'var(--success)', fontWeight: 600 }}>
+                        ✓ All checks passed — FedEx is configured correctly.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </ConfigSection>
         );
