@@ -15,7 +15,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // ─── Normalization helpers ────────────────────────────────────────────────────
 
 const COUNTRY_MAP = {
-  'united states': 'US', 'united states of america': 'US', 'usa': 'US', 'u.s.a.': 'US', 'u.s.': 'US', 'us': 'US',
+  'united states': 'US', 'united states of america': 'US', 'usa': 'US', 'u.s.a.': 'US', 'u.s.a': 'US', 'u.s.': 'US', 'us': 'US',
   'mexico': 'MX', 'méxico': 'MX', 'mex': 'MX',
   'canada': 'CA', 'can': 'CA',
   'united kingdom': 'GB', 'uk': 'GB', 'great britain': 'GB',
@@ -113,18 +113,25 @@ router.post('/zoho', csvFields, async (req, res) => {
   const patientMap = {}; // name → id (or placeholder in preview)
 
   for (const row of accountRows) {
-    const name  = pick(row, 'Account Name', 'Name', 'Customer Name', 'Full Name');
-    const email = normalizeEmail(pick(row, 'Email', 'Account Email', 'Contact Email'));
+    // Zoho exports "Contact Name" or "Display Name"; fall back to First + Last
+    let name = pick(row, 'Contact Name', 'Display Name', 'Account Name', 'Customer Name', 'Full Name', 'Name');
+    if (!name) {
+      const first = pick(row, 'First Name');
+      const last  = pick(row, 'Last Name');
+      name = [first, last].filter(Boolean).join(' ').trim();
+    }
+    // Zoho exports email as "EmailID"
+    const email = normalizeEmail(pick(row, 'EmailID', 'Email', 'Account Email', 'Contact Email'));
     if (!name) { addAnomaly(`Patient row missing name: ${JSON.stringify(row)}`); continue; }
 
     const billing_address = {
-      street:  pick(row, 'Billing Street', 'Billing Address', 'Street'),
+      street:  pick(row, 'Billing Address', 'Billing Street', 'Street'),
       city:    pick(row, 'Billing City', 'City'),
       state:   pick(row, 'Billing State', 'State'),
       zip:     pick(row, 'Billing Code', 'Billing Zip', 'Zip', 'Postal Code'),
       country: normalizeCountry(pick(row, 'Billing Country', 'Country')) || 'US',
     };
-    const shipping_address_raw = pick(row, 'Shipping Street', 'Shipping Address');
+    const shipping_address_raw = pick(row, 'Shipping Address', 'Shipping Street');
     const shipping_address = shipping_address_raw ? {
       street:  shipping_address_raw,
       city:    pick(row, 'Shipping City'),
@@ -133,7 +140,7 @@ router.post('/zoho', csvFields, async (req, res) => {
       country: normalizeCountry(pick(row, 'Shipping Country')) || billing_address.country,
     } : null;
 
-    const phone = pick(row, 'Phone', 'Mobile', 'Contact Phone');
+    const phone = pick(row, 'Phone', 'MobilePhone', 'Mobile Phone', 'Mobile', 'Contact Phone', 'Billing Phone');
 
     sample('patients', { name, email, billing_address });
 
