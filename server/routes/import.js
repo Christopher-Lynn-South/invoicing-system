@@ -331,9 +331,15 @@ router.post('/zoho', csvFields, async (req, res) => {
       addAnomaly(`Invoice ${invoice_number}: balance $${balance.toFixed(2)} > 0 but status=paid — check manually`);
     }
 
-    const order_id = orderMap[soNumber];
+    // Try in-memory map first, then fall back to DB lookup by order_number
+    let order_id = orderMap[soNumber];
+    if (!order_id && soNumber && execute) {
+      const [found] = await db.select({ id: sales_orders.id })
+        .from(sales_orders).where(eq(sales_orders.order_number, soNumber));
+      if (found) order_id = found.id;
+    }
     if (!order_id && soNumber) {
-      addAnomaly(`Invoice ${invoice_number}: order not found "${soNumber}"`);
+      addAnomaly(`Invoice ${invoice_number}: order not found "${soNumber}" — import sales orders first`);
     }
 
     sample('invoices', { invoice_number, soNumber, pay_status, total });
@@ -379,9 +385,15 @@ router.post('/zoho', csvFields, async (req, res) => {
     const status    = delivered ? 'delivered' : tracking ? 'in_transit' : 'label_created';
     const service_type = normalizeServiceType(carrier);
 
-    const order_id = orderMap[soNumber];
+    // Try in-memory map first, then fall back to DB lookup by order_number
+    let order_id = orderMap[soNumber];
+    if (!order_id && soNumber && execute) {
+      const [found] = await db.select({ id: sales_orders.id })
+        .from(sales_orders).where(eq(sales_orders.order_number, soNumber));
+      if (found) order_id = found.id;
+    }
     if (!order_id && soNumber) {
-      addAnomaly(`Package ${raw_import_id}: order not found "${soNumber}"`);
+      addAnomaly(`Package ${raw_import_id}: order not found "${soNumber}" — import sales orders first`);
     }
 
     sample('shipments', { raw_import_id, soNumber, tracking, carrier, status });
