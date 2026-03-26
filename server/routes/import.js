@@ -79,6 +79,24 @@ function pick(row, ...keys) {
   return '';
 }
 
+const SALUTATIONS = /^(mr\.?|mrs\.?|ms\.?|miss|dr\.?|prof\.?|rev\.?)\s+/i;
+function stripSalutation(name) { return (name || '').replace(SALUTATIONS, '').trim(); }
+
+// Register a patient under multiple name keys for flexible lookup
+function registerPatient(map, name, id) {
+  map[name] = id;
+  const stripped = stripSalutation(name);
+  if (stripped !== name) map[stripped] = id;
+  map[name.toLowerCase()] = id;
+  map[stripped.toLowerCase()] = id;
+}
+
+// Look up patient id by name, trying salutation-stripped variants
+function lookupPatient(map, raw) {
+  if (!raw) return undefined;
+  return map[raw] || map[stripSalutation(raw)] || map[raw.toLowerCase()] || map[stripSalutation(raw).toLowerCase()];
+}
+
 // ─── POST /api/import/zoho?mode=preview|execute ────────────────────────────────
 const csvFields = upload.fields([
   { name: 'accounts', maxCount: 1 },
@@ -152,14 +170,14 @@ router.post('/zoho', csvFields, async (req, res) => {
               .where(eq(patients.name, name)))[0];
 
         if (existing) {
-          patientMap[name] = existing.id;
+          registerPatient(patientMap, name, existing.id);
           report.patients.skipped++;
         } else {
           const [ins] = await db.insert(patients).values({
             name, email: email || null, phone: phone || null,
             billing_address, shipping_address,
           }).returning();
-          patientMap[name] = ins.id;
+          registerPatient(patientMap, name, ins.id);
           report.patients.inserted++;
         }
       } catch (err) {
@@ -167,7 +185,7 @@ router.post('/zoho', csvFields, async (req, res) => {
         addAnomaly(`Patient "${name}": ${err.message}`);
       }
     } else {
-      patientMap[name] = `preview-${name}`;
+      registerPatient(patientMap, name, `preview-${name}`);
       report.patients.inserted++;
     }
   }
@@ -213,7 +231,7 @@ router.post('/zoho', csvFields, async (req, res) => {
   // Group by order number (one row per line item in Zoho exports)
   const orderGroups = {};
   for (const row of soRows) {
-    const num = pick(row, 'Sales Order#', 'SO Number', 'Order Number', 'Sales Order No');
+    const num = pick(row, 'Sales Order Number', 'Sales Order#', 'SO Number', 'Order Number', 'Sales Order No');
     if (!num) continue;
     if (!orderGroups[num]) orderGroups[num] = [];
     orderGroups[num].push(row);
@@ -221,14 +239,14 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   for (const [order_number, rows] of Object.entries(orderGroups)) {
     const row = rows[0];
-    const patientName = pick(row, 'Patient Name', 'Customer Name', 'Account Name', 'Contact Name');
-    const status = normalizeStatus(pick(row, 'Status', 'Order Status'));
-    const created_at = pick(row, 'Date', 'Order Date', 'Created Date');
-    const notes = pick(row, 'Notes', 'Comments', 'Internal Notes');
-    const patient_id = patientMap[patientName];
+    const patientName = pick(row, 'Customer Name', 'Contact Name', 'Patient Name', 'Account Name', 'Bill To');
+    const status = normalizeStatus(pick(row, 'Status', 'Order Status', 'Sales Order Status'));
+    const created_at = pick(row, 'Sales Order Date', 'Date', 'Order Date', 'Created Date');
+    const notes = pick(row, 'Notes', 'Comments', 'Internal Notes', 'Customer Notes');
+    const patient_id = lookupPatient(patientMap, patientName);
 
     if (!patient_id) {
-      addAnomaly(`Order ${order_number}: patient not found "${patientName}"`);
+      addAnomaly(`Order ${order_number}: patient not found "${patientName}" — ensure contacts were imported first`);
       if (!execute) orderMap[order_number] = `preview-${order_number}`;
       continue;
     }
@@ -299,7 +317,7 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   for (const [invoice_number, rows] of Object.entries(invGroups)) {
     const row = rows[0];
-    const soNumber  = pick(row, 'Sales Order#', 'SO Number', 'Sales Order No');
+    const soNumber  = pick(row, 'Sales Order Number', 'Sales Order#', 'SO Number', 'Sales Order No');
     const pay_status = normalizePayStatus(pick(row, 'Status', 'Invoice Status', 'Payment Status'));
     const subtotal  = parseFloat(pick(row, 'Sub Total', 'Subtotal', 'Sub-Total') || '0');
     const shipping  = parseFloat(pick(row, 'Shipping Charge', 'Shipping', 'Freight') || '0');
@@ -352,7 +370,7 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   for (const row of pkgRows) {
     const raw_import_id = pick(row, 'Package#', 'Package Number', 'Shipment#', 'Shipment Number');
-    const soNumber  = pick(row, 'Sales Order#', 'SO Number', 'Sales Order No');
+    const soNumber  = pick(row, 'Sales Order Number', 'Sales Order#', 'SO Number', 'Sales Order No');
     const tracking  = pick(row, 'Tracking Number', 'Tracking #', 'AWB Number');
     const carrier   = pick(row, 'Carrier', 'Shipping Carrier', 'Ship Via');
     const ship_date = pick(row, 'Ship Date', 'Shipped Date', 'Date Shipped');
