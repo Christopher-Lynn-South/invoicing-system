@@ -43,6 +43,12 @@ export default function PatientDetail() {
   const [tab, setTab] = useState('overview');
   const [prescriptions, setPrescriptions] = useState([]);
   const [contacts, setContacts] = useState([]);
+  const [reminders, setReminders] = useState([]);
+  const products = useOrderStore(s => s.products);
+  const fetchProducts = useOrderStore(s => s.fetchProducts);
+  const [showReminderModal, setShowReminderModal] = useState(false);
+  const [reminderForm, setReminderForm] = useState({ product_id: '', dosage_mg: '', dosage_freq: 'daily', doses_per_freq: '1', last_fill_qty_mg: '', last_fill_date: new Date().toISOString().split('T')[0] });
+  const [savingReminder, setSavingReminder] = useState(false);
   const [contactModal, setContactModal] = useState(false);
   const [contactForm, setContactForm] = useState({ relationship: 'guardian', first_name: '', last_name: '', phone: '', email: '', is_primary: false, receives_notifications: false });
 
@@ -77,17 +83,19 @@ export default function PatientDetail() {
   }
 
   async function load() {
-    const [pRes, rxRes, ctRes] = await Promise.all([
+    const [pRes, rxRes, ctRes, remRes] = await Promise.all([
       api.get(`/patients/${id}`),
       api.get(`/patients/${id}/prescriptions`),
       api.get(`/patients/${id}/contacts`),
+      api.get(`/reminders/patient/${id}`),
     ]);
     setPatient(pRes.data);
+    setReminders(remRes.data);
     setPrescriptions(rxRes.data);
     setContacts(ctRes.data);
   }
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); fetchProducts(); }, [id]);
 
   async function grantPortalAccess() {
     try {
@@ -108,6 +116,28 @@ export default function PatientDetail() {
     } catch (err) {
       addToast(err.response?.data?.message || 'Failed to revoke access.', 'error');
     }
+  }
+
+  async function saveReminder(e) {
+    e.preventDefault();
+    setSavingReminder(true);
+    try {
+      await api.post('/reminders', {
+        patient_id: id,
+        product_id: reminderForm.product_id,
+        dosage_mg: parseFloat(reminderForm.dosage_mg),
+        dosage_freq: reminderForm.dosage_freq,
+        doses_per_freq: parseFloat(reminderForm.doses_per_freq || 1),
+        last_fill_qty_mg: parseFloat(reminderForm.last_fill_qty_mg),
+        last_fill_date: reminderForm.last_fill_date,
+      });
+      addToast('Reminder created', 'success');
+      setShowReminderModal(false);
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed', 'error');
+    }
+    setSavingReminder(false);
   }
 
   async function saveContact(e) {
@@ -186,7 +216,7 @@ export default function PatientDetail() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 20 }}>
-        {['overview', 'prescriptions', 'contacts', 'orders'].map(t => (
+        {['overview', 'prescriptions', 'contacts', 'orders', 'reminders'].map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             background: 'none', border: 'none', padding: '8px 16px', fontSize: 14, cursor: 'pointer',
             color: tab === t ? 'var(--accent)' : 'var(--text-secondary)',
@@ -315,6 +345,53 @@ export default function PatientDetail() {
         </div>
       )}
 
+      {/* Reminders */}
+      {tab === 'reminders' && (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+            <button onClick={() => { setReminderForm({ product_id: '', dosage_mg: '', dosage_freq: 'daily', doses_per_freq: '1', last_fill_qty_mg: '', last_fill_date: new Date().toISOString().split('T')[0] }); setShowReminderModal(true); }}
+              style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+              + Add Reminder
+            </button>
+          </div>
+          {reminders.length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>No refill reminders set up yet.</p>
+          ) : reminders.map(r => {
+            const ds = r.days_supply;
+            return (
+              <div key={r.id} style={{ background: 'var(--bg-surface)', border: `1px solid ${r.overdue ? 'var(--danger)' : r.due_soon ? 'var(--warning)' : 'var(--border)'}44`, borderRadius: 8, padding: '14px 18px', marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>{r.product_name}</div>
+                    {r.dosage_mg && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                        {r.dosage_mg} mg × {r.doses_per_freq || 1}/{r.dosage_freq === 'weekly' ? 'week' : 'day'}
+                        {ds && <span> &mdash; {ds} day supply</span>}
+                      </div>
+                    )}
+                    {r.last_fill_date && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+                        Last filled: {fmtDate(r.last_fill_date)} &nbsp;|&nbsp; {r.last_fill_qty_mg} mg
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: 'right', fontSize: 13 }}>
+                    {r.next_due && (
+                      <div style={{ color: r.overdue ? 'var(--danger)' : r.due_soon ? 'var(--warning)' : 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>
+                        {r.overdue ? '⚠ Overdue' : r.due_soon ? '⏰ Due Soon'  : 'Refill by'}: {fmtDate(r.next_due)}
+                      </div>
+                    )}
+                    <div style={{ color: 'var(--text-muted)' }}>
+                      Last reminded: {r.last_reminded_at ? fmtDate(r.last_reminded_at) : 'Never'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Address Modal */}
       <Modal open={!!addrModal} onClose={() => setAddrModal(null)} title={addrModal === 'billing' ? 'Billing Address' : 'Shipping Address'}>
         <form onSubmit={saveAddr}>
@@ -425,6 +502,74 @@ export default function PatientDetail() {
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
             <button type="button" onClick={() => setContactModal(false)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
             <button type="submit" style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600 }}>Save Contact</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Reminder Modal */}
+      <Modal open={showReminderModal} onClose={() => setShowReminderModal(false)} title="Add Refill Reminder">
+        <form onSubmit={saveReminder}>
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Product *</label>
+            <select value={reminderForm.product_id} onChange={e => setReminderForm(f => ({ ...f, product_id: e.target.value }))} required style={{ width: '100%' }}>
+              <option value="">Select product…</option>
+              {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Dosage</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>mg per dose *</label>
+              <input type="number" min="0.01" step="0.01" required placeholder="e.g. 10"
+                value={reminderForm.dosage_mg} onChange={e => setReminderForm(f => ({ ...f, dosage_mg: e.target.value }))} style={{ width: '100%' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Times per</label>
+              <input type="number" min="0.5" step="0.5" placeholder="1"
+                value={reminderForm.doses_per_freq} onChange={e => setReminderForm(f => ({ ...f, doses_per_freq: e.target.value }))} style={{ width: '100%' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Frequency</label>
+              <select value={reminderForm.dosage_freq} onChange={e => setReminderForm(f => ({ ...f, dosage_freq: e.target.value }))} style={{ width: '100%' }}>
+                <option value="daily">Day</option>
+                <option value="weekly">Week</option>
+              </select>
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Last Fill</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Total mg purchased *</label>
+              <input type="number" min="1" step="0.01" required placeholder="e.g. 300"
+                value={reminderForm.last_fill_qty_mg} onChange={e => setReminderForm(f => ({ ...f, last_fill_qty_mg: e.target.value }))} style={{ width: '100%' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Fill date *</label>
+              <input type="date" required value={reminderForm.last_fill_date}
+                onChange={e => setReminderForm(f => ({ ...f, last_fill_date: e.target.value }))} style={{ width: '100%' }} />
+            </div>
+          </div>
+          {reminderForm.dosage_mg && reminderForm.last_fill_qty_mg && (() => {
+            const mg = parseFloat(reminderForm.dosage_mg);
+            const times = parseFloat(reminderForm.doses_per_freq || 1);
+            const qty = parseFloat(reminderForm.last_fill_qty_mg);
+            const dailyMg = mg * times * (reminderForm.dosage_freq === 'weekly' ? 1/7 : 1);
+            const ds = dailyMg > 0 ? Math.floor(qty / dailyMg) : null;
+            if (!ds) return null;
+            const runOut = new Date(reminderForm.last_fill_date); runOut.setDate(runOut.getDate() + ds);
+            const remind = new Date(reminderForm.last_fill_date); remind.setDate(remind.getDate() + ds - 7);
+            return (
+              <div style={{ background: 'var(--accent)11', border: '1px solid var(--accent)33', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13 }}>
+                <div><strong>{ds} day supply</strong> — runs out {runOut.toLocaleDateString()}</div>
+                <div style={{ color: 'var(--warning)', marginTop: 2 }}>Reminder will send: <strong>{remind.toLocaleDateString()}</strong> (7 days before)</div>
+              </div>
+            );
+          })()}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => setShowReminderModal(false)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
+            <button type="submit" disabled={savingReminder} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600, opacity: savingReminder ? 0.7 : 1 }}>
+              {savingReminder ? 'Saving…' : 'Create Reminder'}
+            </button>
           </div>
         </form>
       </Modal>

@@ -140,6 +140,12 @@ const reminder_rules = pgTable('reminder_rules', {
   patient_id: uuid('patient_id').notNull().references(() => patients.id),
   product_id: uuid('product_id').notNull().references(() => products.id),
   interval_days: integer('interval_days').notNull(),
+  // Dosage fields — used to calculate days supply and next refill date
+  dosage_mg: numeric('dosage_mg', { precision: 8, scale: 2 }),          // mg per dose
+  dosage_freq: text('dosage_freq'),                                      // 'daily' | 'weekly'
+  doses_per_freq: numeric('doses_per_freq', { precision: 4, scale: 2 }).default('1'), // doses per day/week
+  last_fill_qty_mg: numeric('last_fill_qty_mg', { precision: 10, scale: 2 }), // total mg last filled
+  last_fill_date: date('last_fill_date'),                                // date of last fill
   last_reminded_at: timestamp('last_reminded_at', { withTimezone: true }),
   last_order_id: uuid('last_order_id').references(() => sales_orders.id),
   active: boolean('active').default(true),

@@ -8,27 +8,43 @@ const { sendReminderEmail } = require('../services/mailer');
 
 const router = express.Router();
 
-function calcNextDue(lastOrderDate, intervalDays) {
-  if (!lastOrderDate) return null;
-  const d = new Date(lastOrderDate);
-  d.setDate(d.getDate() + intervalDays);
-  return d.toISOString().split('T')[0];
+// Calculate days supply from dosage fields
+function calcDaysSupply(rule) {
+  const { dosage_mg, dosage_freq, doses_per_freq, last_fill_qty_mg } = rule;
+  if (!dosage_mg || !dosage_freq || !last_fill_qty_mg) return null;
+  const timesPerFreq = parseFloat(doses_per_freq || 1);
+  const dailyMg = parseFloat(dosage_mg) * timesPerFreq * (dosage_freq === 'weekly' ? 1 / 7 : 1);
+  if (dailyMg <= 0) return null;
+  return Math.floor(parseFloat(last_fill_qty_mg) / dailyMg);
 }
 
 async function enrichRule(rule) {
   const today = new Date().toISOString().split('T')[0];
-  let lastOrderDate = null;
+  let next_due = null;
+  let days_supply = null;
 
-  if (rule.last_order_id) {
+  // Prefer dosage-based calculation if fill date + dosage info are available
+  if (rule.last_fill_date && rule.dosage_mg && rule.last_fill_qty_mg) {
+    days_supply = calcDaysSupply(rule);
+    if (days_supply !== null) {
+      const fillDate = new Date(rule.last_fill_date);
+      fillDate.setDate(fillDate.getDate() + days_supply - 7); // 7-day early warning
+      next_due = fillDate.toISOString().split('T')[0];
+    }
+  } else if (rule.last_order_id) {
+    // Fall back to order-based interval
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, rule.last_order_id));
-    if (order) lastOrderDate = order.created_at.toISOString().split('T')[0];
+    if (order) {
+      const d = new Date(order.created_at);
+      d.setDate(d.getDate() + rule.interval_days);
+      next_due = d.toISOString().split('T')[0];
+    }
   }
 
-  const next_due = calcNextDue(lastOrderDate, rule.interval_days);
   const overdue = next_due && next_due < today;
-  const due_soon = next_due && next_due <= new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+  const due_soon = next_due && !overdue && next_due <= new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
 
-  return { ...rule, next_due, overdue, due_soon, last_order_date: lastOrderDate };
+  return { ...rule, next_due, overdue, due_soon, days_supply };
 }
 
 // GET /api/reminders
@@ -67,10 +83,39 @@ router.get('/', requireLogin, async (req, res) => {
   }
 });
 
+// GET /api/reminders/patient/:patientId
+router.get('/patient/:patientId', requireLogin, async (req, res) => {
+  try {
+    const rows = await db.select({
+      rule: reminder_rules,
+      product_name: products.name,
+      product_sku: products.sku,
+    })
+      .from(reminder_rules)
+      .leftJoin(products, eq(reminder_rules.product_id, products.id))
+      .where(eq(reminder_rules.patient_id, req.params.patientId));
+
+    const enriched = await Promise.all(rows.map(async r => {
+      const e = await enrichRule(r.rule);
+      return { ...e, product_name: r.product_name, product_sku: r.product_sku };
+    }));
+    return res.json(enriched);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
 // POST /api/reminders
 router.post('/', requireLogin, validate(reminderSchema), async (req, res) => {
   try {
-    const [row] = await db.insert(reminder_rules).values(req.validated).returning();
+    const data = { ...req.validated };
+    // Auto-calculate interval_days from dosage if not explicitly provided
+    if (!data.interval_days) {
+      const ds = calcDaysSupply(data);
+      data.interval_days = ds || 30; // default 30 if can't calculate
+    }
+    const [row] = await db.insert(reminder_rules).values(data).returning();
     return res.status(201).json(row);
   } catch (err) {
     console.error(err);

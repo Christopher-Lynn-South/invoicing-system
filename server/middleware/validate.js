@@ -101,7 +101,12 @@ const shipSchema = z.object({
 const reminderSchema = z.object({
   patient_id: z.string().uuid(),
   product_id: z.string().uuid(),
-  interval_days: z.number().int().positive(),
+  interval_days: z.number().int().positive().optional(),
+  dosage_mg: z.number().positive().optional(),
+  dosage_freq: z.enum(['daily', 'weekly']).optional(),
+  doses_per_freq: z.number().positive().optional(),
+  last_fill_qty_mg: z.number().positive().optional(),
+  last_fill_date: z.string().optional(),
 });
 
 const prescriptionSchema = z.object({
