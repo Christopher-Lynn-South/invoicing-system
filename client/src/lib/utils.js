@@ -1,10 +1,9 @@
 export const CC_FEE_RATE = 0.039;
 
-export function calcFee(subtotal, method) {
-  if (method === 'stripe_cc') {
-    return Math.round(parseFloat(subtotal) * CC_FEE_RATE * 100) / 100;
-  }
-  return 0;
+// Subtotals are always grossed up 3.9% at invoice creation (CC price baked in).
+// ACH/USDC get a discount back to the base price.
+export function calcDiscount(subtotal) {
+  return Math.round(parseFloat(subtotal) * (CC_FEE_RATE / (1 + CC_FEE_RATE)) * 100) / 100;
 }
 
 export function fmtCurrency(amount) {

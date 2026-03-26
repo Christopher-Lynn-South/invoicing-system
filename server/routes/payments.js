@@ -9,6 +9,8 @@ const { sendPaymentConfirmation } = require('../services/mailer');
 
 const router = express.Router();
 
+// Invoice subtotals are always grossed up 3.9% at creation (CC price baked in).
+// CC pays full price, ACH/USDC get a discount that strips out the markup.
 const CC_FEE_RATE = 0.039;
 
 // POST /api/pay/:invoiceId/intent
@@ -22,17 +24,22 @@ router.post('/:invoiceId/intent', validate(payIntentSchema), async (req, res) =>
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
 
-    let processingFee = 0;
-    // Base = products subtotal + any saved shipping charge
-    const base = parseFloat(invoice.subtotal) + parseFloat(invoice.shipping_charge || 0);
+    const invoiceSubtotal = parseFloat(invoice.subtotal);
+    const shipping = parseFloat(invoice.shipping_charge || 0);
+    const base = invoiceSubtotal + shipping;
+
+    let processingFee = 0; // positive = fee added, negative = discount applied
     let total = base;
 
-    if (method === 'stripe_cc') {
-      processingFee = Math.round(base * CC_FEE_RATE * 100) / 100;
-      total = Math.round((base + processingFee) * 100) / 100;
+    if (method === 'ach' || method === 'usdc') {
+      // Strip out the CC markup: discount = subtotal × (0.039 / 1.039)
+      const discount = Math.round(invoiceSubtotal * (CC_FEE_RATE / (1 + CC_FEE_RATE)) * 100) / 100;
+      processingFee = -discount; // stored negative to indicate it's a discount
+      total = Math.round((base - discount) * 100) / 100;
     }
+    // stripe_cc: processingFee stays 0, total stays base (CC price already baked in)
 
-    // Update invoice with locked fee and total
+    // Update invoice with locked discount/total
     await db.update(invoices)
       .set({
         pay_method: method,

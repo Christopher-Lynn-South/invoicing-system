@@ -3,9 +3,7 @@ import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { QRCodeSVG } from 'qrcode.react';
-import { fmtCurrency, calcFee } from '../lib/utils';
-
-const CC_FEE_RATE = 0.039;
+import { fmtCurrency, calcDiscount } from '../lib/utils';
 let stripePromise = null;
 
 function getStripe() {
@@ -21,19 +19,19 @@ const METHOD_CARDS = [
     id: 'stripe_cc',
     label: 'Credit Card',
     icon: '💳',
-    desc: '+3.9% processing fee',
+    desc: 'Pay the listed price',
   },
   {
     id: 'ach',
     label: 'ACH Bank Transfer',
     icon: '🏦',
-    desc: 'No fee — 2-3 business days',
+    desc: '3.9% discount — 2-3 business days',
   },
   {
     id: 'usdc',
     label: 'USDC (Polygon or Ethereum)',
     icon: '🔷',
-    desc: 'No fee — instant',
+    desc: '3.9% discount — instant',
   },
 ];
 
@@ -239,10 +237,9 @@ export default function PatientPayPortal({ invoice }) {
   const stripe = getStripe();
 
   const subtotal = parseFloat(invoice.subtotal);
-  const fee = method === 'stripe_cc' ? Math.round(subtotal * CC_FEE_RATE * 100) / 100 : 0;
-  const total = subtotal + fee;
-  const ccTotal = subtotal + Math.round(subtotal * CC_FEE_RATE * 100) / 100;
-  const savings = ccTotal - subtotal;
+  const shipping = parseFloat(invoice.shipping_charge || 0);
+  const discount = (method === 'ach' || method === 'usdc') ? calcDiscount(subtotal) : 0;
+  const total = subtotal + shipping - discount;
 
   function onSuccess() {
     setPaid(true);
@@ -281,10 +278,16 @@ export default function PatientPayPortal({ invoice }) {
               <td colSpan={2} style={{ padding: '8px 0', color: 'var(--text-muted)' }}>Subtotal</td>
               <td style={{ padding: '8px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)' }}>{fmtCurrency(subtotal)}</td>
             </tr>
-            {fee > 0 && (
+            {shipping > 0 && (
               <tr>
-                <td colSpan={2} style={{ padding: '4px 0', color: 'var(--warning)', fontSize: 12 }}>CC Fee (3.9%)</td>
-                <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', color: 'var(--warning)', fontSize: 12 }}>+{fmtCurrency(fee)}</td>
+                <td colSpan={2} style={{ padding: '4px 0', color: 'var(--text-muted)', fontSize: 12 }}>Shipping</td>
+                <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', fontSize: 12 }}>{fmtCurrency(shipping)}</td>
+              </tr>
+            )}
+            {discount > 0 && (
+              <tr>
+                <td colSpan={2} style={{ padding: '4px 0', color: 'var(--success)', fontSize: 12, fontWeight: 600 }}>Discount (ACH/USDC)</td>
+                <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', color: 'var(--success)', fontSize: 12, fontWeight: 600 }}>−{fmtCurrency(discount)}</td>
               </tr>
             )}
             <tr>
@@ -313,11 +316,11 @@ export default function PatientPayPortal({ invoice }) {
             <span style={{ fontSize: 22 }}>{m.icon}</span>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 600, fontSize: 15 }}>{m.label}</div>
-              <div style={{ fontSize: 12, color: m.id === 'stripe_cc' ? 'var(--warning)' : 'var(--success)' }}>{m.desc}</div>
+              <div style={{ fontSize: 12, color: m.id === 'stripe_cc' ? 'var(--text-muted)' : 'var(--success)' }}>{m.desc}</div>
             </div>
             {m.id !== 'stripe_cc' && (
               <span style={{ fontSize: 12, color: 'var(--success)', fontWeight: 600 }}>
-                Save {fmtCurrency(savings)}
+                Save {fmtCurrency(calcDiscount(subtotal))}
               </span>
             )}
             <div style={{

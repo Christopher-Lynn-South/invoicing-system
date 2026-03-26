@@ -173,10 +173,10 @@ export default function CustomerInvoiceDetail() {
                   <td colSpan={3} style={{ padding: '10px 0', color: 'var(--text-muted)' }}>Subtotal</td>
                   <td style={{ padding: '10px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)' }}>{fmtCurrency(invoice.subtotal)}</td>
                 </tr>
-                {parseFloat(invoice.processing_fee) > 0 && (
+                {parseFloat(invoice.processing_fee) < 0 && (
                   <tr>
-                    <td colSpan={3} style={{ padding: '4px 0', color: 'var(--warning)', fontSize: 12 }}>CC Processing Fee (3.9%)</td>
-                    <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', color: 'var(--warning)', fontSize: 12 }}>+{fmtCurrency(invoice.processing_fee)}</td>
+                    <td colSpan={3} style={{ padding: '4px 0', color: 'var(--success)', fontSize: 12, fontWeight: 600 }}>Discount (ACH/USDC)</td>
+                    <td style={{ padding: '4px 0', textAlign: 'right', fontFamily: 'var(--brand-mono)', color: 'var(--success)', fontSize: 12, fontWeight: 600 }}>−{fmtCurrency(Math.abs(invoice.processing_fee))}</td>
                   </tr>
                 )}
                 <tr>

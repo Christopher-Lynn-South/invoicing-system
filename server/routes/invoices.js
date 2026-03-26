@@ -63,7 +63,9 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
       .leftJoin(products, eq(order_items.product_id, products.id))
       .where(eq(order_items.order_id, order.id));
 
-    const subtotal = items.reduce((sum, r) => sum + parseFloat(r.item.line_total), 0);
+    const baseSubtotal = items.reduce((sum, r) => sum + parseFloat(r.item.line_total), 0);
+    // Always gross up by 3.9% — this is the CC price baked into line items
+    const subtotal = Math.round(baseSubtotal * 1.039 * 100) / 100;
     const shipping_charge = order.shipping_quote?.net_charge ? parseFloat(order.shipping_quote.net_charge) : 0;
     const invoice_number = await generateInvoiceNumber();
     const due_date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
