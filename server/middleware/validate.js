@@ -71,6 +71,7 @@ const usdcConfirmSchema = z.object({
 const shipSchema = z.object({
   service: z.string().min(1),
   box_type: z.enum([
+    'YOUR_PACKAGING',
     'FEDEX_ENVELOPE',
     'FEDEX_PAK',
     'FEDEX_TUBE',
@@ -82,6 +83,9 @@ const shipSchema = z.object({
     'FEDEX_25KG_BOX',
   ]),
   weight_lbs: z.number().positive(),
+  length_in: z.number().positive().optional(),
+  width_in: z.number().positive().optional(),
+  height_in: z.number().positive().optional(),
   recipient_name: z.string().optional(),
   recipient_street: z.string().optional(),
   recipient_city: z.string().optional(),

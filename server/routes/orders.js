@@ -207,20 +207,26 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
     }
 
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
-    const { service, box_type, weight_lbs, recipient_name, recipient_street,
-      recipient_city, recipient_state, recipient_zip, recipient_country } = req.validated;
+    const { service, box_type, weight_lbs, length_in, width_in, height_in,
+      recipient_name, recipient_street, recipient_city, recipient_state,
+      recipient_zip, recipient_country } = req.validated;
 
+    const addr = patient.billing_address || {};
     const labelResult = await fedexService.createShipment({
       service_type: service,
       box_type,
       weight_lbs,
+      length_in: length_in || undefined,
+      width_in:  width_in  || undefined,
+      height_in: height_in || undefined,
       recipient: {
-        name: recipient_name || patient.name,
-        street: recipient_street || patient.billing_address?.street || '',
-        city: recipient_city || patient.billing_address?.city || '',
-        state: recipient_state || patient.billing_address?.state || '',
-        zip: recipient_zip || patient.billing_address?.zip || '',
-        country: recipient_country || patient.billing_address?.country || 'US',
+        name:    recipient_name    || patient.name,
+        phone:   patient.phone     || undefined,
+        street:  recipient_street  || addr.street  || '',
+        city:    recipient_city    || addr.city    || '',
+        state:   recipient_state   || addr.state   || '',
+        zip:     recipient_zip     || addr.zip     || '',
+        country: recipient_country || addr.country || 'US',
       },
     });
 
@@ -237,7 +243,7 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
       fedex_tracking_number: labelResult.trackingNumber,
       service_type: service,
       weight_lbs: weight_lbs.toString(),
-      dimensions_json: { box_type },   // store box type in the existing JSON column
+      dimensions_json: { box_type, length_in: length_in || null, width_in: width_in || null, height_in: height_in || null },
       label_pdf_url: `/uploads/labels/${order.id}.pdf`,
       ship_date: new Date().toISOString().split('T')[0],
       estimated_delivery: labelResult.estimatedDelivery || null,
@@ -422,6 +428,19 @@ router.post('/:id/rate-quote', requireLogin, async (req, res) => {
       zip:     recipient_zip     || addr.zip     || '',
       country: recipient_country || addr.country || 'US',
     };
+
+    if (!recipient.zip) {
+      return res.status(400).json({
+        error: 'ADDRESS_INCOMPLETE',
+        message: 'Patient is missing a zip/postal code. Please update the patient address before requesting rates.',
+      });
+    }
+    if (!recipient.country) {
+      return res.status(400).json({
+        error: 'ADDRESS_INCOMPLETE',
+        message: 'Patient is missing a country. Please update the patient address before requesting rates.',
+      });
+    }
 
     const rates = await fedexService.getRates({ package_type, weight_lbs, length_in, width_in, height_in, recipient });
     return res.json({ rates, valid_packages: SERVICE_VALID_PACKAGES });
