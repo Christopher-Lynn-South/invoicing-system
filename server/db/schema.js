@@ -21,6 +21,7 @@ const patients = pgTable('patients', {
   date_of_birth: date('date_of_birth'),
   phone: text('phone'),
   billing_address: jsonb('billing_address'),
+  shipping_address: jsonb('shipping_address'),
   usdc_wallet: text('usdc_wallet'),
   stripe_customer_id: text('stripe_customer_id'),
   requires_prescription: boolean('requires_prescription').default(false),

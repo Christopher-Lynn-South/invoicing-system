@@ -211,7 +211,8 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
       recipient_name, recipient_street, recipient_city, recipient_state,
       recipient_zip, recipient_country } = req.validated;
 
-    const addr = patient.billing_address || {};
+    // Prefer shipping_address; fall back to billing_address
+    const addr = patient.shipping_address || patient.billing_address || {};
     const labelResult = await fedexService.createShipment({
       service_type: service,
       box_type,
@@ -420,7 +421,8 @@ router.post('/:id/rate-quote', requireLogin, async (req, res) => {
       return res.status(400).json({ error: 'DIMENSIONS_REQUIRED', message: 'L×W×H dimensions are required for YOUR_PACKAGING.' });
     }
 
-    const addr = patient.billing_address || {};
+    // Prefer shipping_address for rate quotes; fall back to billing_address
+    const addr = patient.shipping_address || patient.billing_address || {};
     const recipient = {
       street:  recipient_street  || addr.street  || '',
       city:    recipient_city    || addr.city    || '',

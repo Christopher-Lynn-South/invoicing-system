@@ -21,18 +21,22 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const addressSchema = z.object({
+  street: z.string().optional(),
+  street2: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  zip: z.string().optional(),
+  country: z.string().optional(),
+});
+
 const patientSchema = z.object({
   name: z.string().min(1),
   email: z.string().email().optional(),
   date_of_birth: z.string().optional(),
   phone: z.string().optional(),
-  billing_address: z.object({
-    street: z.string().optional(),
-    city: z.string().optional(),
-    state: z.string().optional(),
-    zip: z.string().optional(),
-    country: z.string().optional(),
-  }).optional(),
+  billing_address: addressSchema.optional(),
+  shipping_address: addressSchema.optional(),
   usdc_wallet: z.string().optional(),
   requires_prescription: z.boolean().optional(),
 });

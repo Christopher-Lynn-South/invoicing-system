@@ -674,7 +674,7 @@ export default function OrderDetail() {
               <div>
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Invoice paid. Ready to ship.</p>
                 <button onClick={() => {
-                  const a = order.patient?.billing_address || {};
+                  const a = order.patient?.shipping_address || order.patient?.billing_address || {};
                   const q = order.shipping_quote;
                   setShipForm(f => ({
                     ...f,

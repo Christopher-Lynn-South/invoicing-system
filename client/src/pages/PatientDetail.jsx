@@ -4,6 +4,32 @@ import api from '../lib/api';
 import useOrderStore from '../store/useOrderStore';
 import { fmtDate } from '../lib/utils';
 import Modal from '../components/Modal';
+import AddressAutocomplete from '../components/AddressAutocomplete';
+
+const EMPTY_ADDR = { street: '', street2: '', city: '', state: '', zip: '', country: 'US' };
+
+function AddrDisplay({ label, addr, onEdit }) {
+  return (
+    <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
+        <button onClick={onEdit} style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)44', borderRadius: 6, padding: '2px 10px', cursor: 'pointer' }}>
+          {addr ? 'Edit' : '+ Add'}
+        </button>
+      </div>
+      {addr ? (
+        <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+          {addr.street && <div>{addr.street}</div>}
+          {addr.street2 && <div>{addr.street2}</div>}
+          <div>{[addr.city, addr.state, addr.zip].filter(Boolean).join(', ')}</div>
+          {addr.country && <div>{addr.country}</div>}
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Not set</div>
+      )}
+    </div>
+  );
+}
 
 const REL_COLORS = {
   parent: '#3b82f6', guardian: '#8b5cf6', emergency: '#ef4444',
@@ -19,6 +45,36 @@ export default function PatientDetail() {
   const [contacts, setContacts] = useState([]);
   const [contactModal, setContactModal] = useState(false);
   const [contactForm, setContactForm] = useState({ relationship: 'guardian', first_name: '', last_name: '', phone: '', email: '', is_primary: false, receives_notifications: false });
+
+  // Address editing
+  const [addrModal, setAddrModal] = useState(null); // null | 'billing' | 'shipping'
+  const [addrForm, setAddrForm] = useState(EMPTY_ADDR);
+  const [sameAsBilling, setSameAsBilling] = useState(false);
+  const [savingAddr, setSavingAddr] = useState(false);
+
+  function openAddrModal(type) {
+    const existing = type === 'billing' ? patient.billing_address : patient.shipping_address;
+    setAddrForm({ ...EMPTY_ADDR, ...(existing || {}) });
+    setSameAsBilling(false);
+    setAddrModal(type);
+  }
+
+  async function saveAddr(e) {
+    e.preventDefault();
+    setSavingAddr(true);
+    try {
+      const value = sameAsBilling && addrModal === 'shipping'
+        ? { ...patient.billing_address }
+        : addrForm;
+      await api.put(`/patients/${id}`, { [addrModal === 'billing' ? 'billing_address' : 'shipping_address']: value });
+      addToast(`${addrModal === 'billing' ? 'Billing' : 'Shipping'} address saved`, 'success');
+      setAddrModal(null);
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to save address', 'error');
+    }
+    setSavingAddr(false);
+  }
 
   async function load() {
     const [pRes, rxRes, ctRes] = await Promise.all([
@@ -157,16 +213,8 @@ export default function PatientDetail() {
               </div>
             </div>
           ))}
-          {patient.billing_address && (
-            <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Billing Address</div>
-              <div style={{ fontSize: 14 }}>
-                {patient.billing_address.street && <div>{patient.billing_address.street}</div>}
-                <div>{[patient.billing_address.city, patient.billing_address.state, patient.billing_address.zip].filter(Boolean).join(', ')}</div>
-                {patient.billing_address.country && <div>{patient.billing_address.country}</div>}
-              </div>
-            </div>
-          )}
+          <AddrDisplay label="Billing Address" addr={patient.billing_address} onEdit={() => openAddrModal('billing')} />
+          <AddrDisplay label="Shipping Address" addr={patient.shipping_address} onEdit={() => openAddrModal('shipping')} />
         </div>
       )}
 
@@ -266,6 +314,72 @@ export default function PatientDetail() {
           ))}
         </div>
       )}
+
+      {/* Address Modal */}
+      <Modal open={!!addrModal} onClose={() => setAddrModal(null)} title={addrModal === 'billing' ? 'Billing Address' : 'Shipping Address'}>
+        <form onSubmit={saveAddr}>
+          {addrModal === 'shipping' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', marginBottom: 16, padding: '10px 14px', background: 'var(--bg-elevated)', borderRadius: 8 }}>
+              <input type="checkbox" checked={sameAsBilling} onChange={e => setSameAsBilling(e.target.checked)} />
+              Use same address as billing
+            </label>
+          )}
+          {(!sameAsBilling || addrModal === 'billing') && (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Street Address</label>
+                <AddressAutocomplete
+                  value={addrForm.street}
+                  onChange={v => setAddrForm(f => ({ ...f, street: v }))}
+                  onSelect={a => setAddrForm(f => ({ ...f, street: a.street, city: a.city, state: a.state, zip: a.zip, country: a.country || f.country }))}
+                  placeholder="Street address"
+                />
+              </div>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Street Line 2 <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(apt, suite, unit)</span></label>
+                <input value={addrForm.street2 || ''} onChange={e => setAddrForm(f => ({ ...f, street2: e.target.value }))} placeholder="Optional" style={{ width: '100%' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 10, marginBottom: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>City</label>
+                  <input value={addrForm.city} onChange={e => setAddrForm(f => ({ ...f, city: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>State</label>
+                  <input value={addrForm.state} onChange={e => setAddrForm(f => ({ ...f, state: e.target.value }))} placeholder="TX" style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>ZIP</label>
+                  <input value={addrForm.zip} onChange={e => setAddrForm(f => ({ ...f, zip: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Country</label>
+                <input value={addrForm.country} onChange={e => setAddrForm(f => ({ ...f, country: e.target.value }))} placeholder="US" style={{ width: '100%' }} />
+              </div>
+            </>
+          )}
+          {sameAsBilling && addrModal === 'shipping' && patient.billing_address && (
+            <div style={{ padding: '10px 14px', background: 'var(--bg-elevated)', borderRadius: 8, fontSize: 13, marginBottom: 16, lineHeight: 1.7 }}>
+              {patient.billing_address.street && <div>{patient.billing_address.street}</div>}
+              {patient.billing_address.street2 && <div>{patient.billing_address.street2}</div>}
+              <div>{[patient.billing_address.city, patient.billing_address.state, patient.billing_address.zip].filter(Boolean).join(', ')}</div>
+              {patient.billing_address.country && <div>{patient.billing_address.country}</div>}
+            </div>
+          )}
+          {sameAsBilling && addrModal === 'shipping' && !patient.billing_address && (
+            <div style={{ padding: '10px 14px', background: '#ef444411', borderRadius: 8, fontSize: 13, color: 'var(--danger)', marginBottom: 16 }}>
+              No billing address on file — please add one first.
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => setAddrModal(null)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
+            <button type="submit" disabled={savingAddr || (sameAsBilling && !patient.billing_address)} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600 }}>
+              {savingAddr ? 'Saving…' : 'Save Address'}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Contact Modal */}
       <Modal open={contactModal} onClose={() => setContactModal(false)} title="Add Contact">
