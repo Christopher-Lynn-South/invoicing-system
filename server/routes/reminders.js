@@ -1,10 +1,11 @@
 const express = require('express');
+const crypto = require('crypto');
 const { db } = require('../db');
-const { reminder_rules, reminder_logs, patients, products, sales_orders } = require('../db/schema');
+const { reminder_rules, reminder_logs, patients, products, sales_orders, shipments, refill_requests } = require('../db/schema');
 const { eq, and, desc, sql } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { validate, reminderSchema } = require('../middleware/validate');
-const { sendReminderEmail } = require('../services/mailer');
+const { sendReminderEmail, sendRefillRequestEmail, sendRefillRequestSMS } = require('../services/mailer');
 
 const router = express.Router();
 
@@ -158,6 +159,96 @@ router.post('/:id/send', requireLogin, async (req, res) => {
       .where(eq(reminder_rules.id, rule.id));
 
     return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+});
+
+// GET /api/reminders/:id/requests  — list refill requests for a rule
+router.get('/:id/requests', requireLogin, async (req, res) => {
+  try {
+    const rows = await db.select().from(refill_requests)
+      .where(eq(refill_requests.rule_id, req.params.id))
+      .orderBy(desc(refill_requests.created_at));
+    return res.json(rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// POST /api/reminders/:id/send-refill-request
+router.post('/:id/send-refill-request', requireLogin, async (req, res) => {
+  try {
+    const [rule] = await db.select().from(reminder_rules).where(eq(reminder_rules.id, req.params.id));
+    if (!rule) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [patient] = await db.select().from(patients).where(eq(patients.id, rule.patient_id));
+    const [product] = await db.select().from(products).where(eq(products.id, rule.product_id));
+
+    // Pull address from last shipment, fall back to shipping_address, then billing_address
+    let ship_address = null;
+    if (rule.last_order_id) {
+      const [lastShipment] = await db.select().from(shipments)
+        .where(eq(shipments.order_id, rule.last_order_id));
+      if (lastShipment) {
+        // Try to get the order's shipping quote recipient address
+        const [lastOrder] = await db.select().from(sales_orders)
+          .where(eq(sales_orders.id, rule.last_order_id));
+        if (lastOrder?.shipping_quote?.confirmed_address) {
+          ship_address = lastOrder.shipping_quote.confirmed_address;
+        }
+      }
+    }
+    if (!ship_address) {
+      ship_address = patient.shipping_address || patient.billing_address;
+    }
+
+    // Proposed ship date — default to next business day or what caller provides
+    const proposed_ship_date = req.body.proposed_ship_date || (() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      // Skip weekends
+      if (d.getDay() === 6) d.setDate(d.getDate() + 2);
+      if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+      return d.toISOString().split('T')[0];
+    })();
+
+    const channel = req.body.channel || 'email'; // 'email' | 'sms' | 'both'
+    const token = crypto.randomBytes(32).toString('hex');
+    const token_expires_at = new Date(Date.now() + 7 * 86400000); // 7 days
+
+    const [request] = await db.insert(refill_requests).values({
+      rule_id: rule.id,
+      patient_id: patient.id,
+      product_id: product.id,
+      token,
+      token_expires_at,
+      proposed_ship_date,
+      ship_address,
+      ship_service: 'PRIORITY_OVERNIGHT',
+      channel,
+    }).returning();
+
+    // Send email
+    if (channel === 'email' || channel === 'both') {
+      await sendRefillRequestEmail(patient, product, request);
+    }
+    // Send SMS if configured
+    if (channel === 'sms' || channel === 'both') {
+      try {
+        await sendRefillRequestSMS(patient, product, request);
+      } catch (smsErr) {
+        console.error('SMS send failed (non-fatal):', smsErr.message);
+      }
+    }
+
+    await db.update(reminder_rules)
+      .set({ last_reminded_at: new Date() })
+      .where(eq(reminder_rules.id, rule.id));
+
+    return res.json({ ok: true, request_id: request.id, proposed_ship_date, ship_address });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });

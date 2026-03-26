@@ -195,6 +195,25 @@ const patient_contacts = pgTable('patient_contacts', {
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
+// ─── refill_requests ──────────────────────────────────────────────────────────
+const refill_requests = pgTable('refill_requests', {
+  id:                uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  rule_id:           uuid('rule_id').notNull().references(() => reminder_rules.id),
+  patient_id:        uuid('patient_id').notNull().references(() => patients.id),
+  product_id:        uuid('product_id').notNull().references(() => products.id),
+  token:             text('token').unique().notNull(),
+  token_expires_at:  timestamp('token_expires_at', { withTimezone: true }).notNull(),
+  status:            text('status').notNull().default('pending'), // pending|confirmed|declined|expired
+  proposed_ship_date: date('proposed_ship_date'),
+  ship_address:      jsonb('ship_address'),
+  ship_service:      text('ship_service').default('PRIORITY_OVERNIGHT'),
+  channel:           text('channel').default('email'),
+  order_id:          uuid('order_id').references(() => sales_orders.id),
+  sent_at:           timestamp('sent_at', { withTimezone: true }).default(sql`now()`),
+  responded_at:      timestamp('responded_at', { withTimezone: true }),
+  created_at:        timestamp('created_at', { withTimezone: true }).default(sql`now()`),
+});
+
 // ─── app_settings ─────────────────────────────────────────────────────────────
 const app_settings = pgTable('app_settings', {
   key: text('key').primaryKey(),
@@ -204,6 +223,7 @@ const app_settings = pgTable('app_settings', {
 
 module.exports = {
   app_settings,
+  refill_requests,
   patients,
   admin_users,
   products,

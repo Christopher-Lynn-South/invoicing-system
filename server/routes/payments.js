@@ -5,7 +5,8 @@ const { eq } = require('drizzle-orm');
 const { validate, payIntentSchema, usdcConfirmSchema } = require('../middleware/validate');
 const stripeService = require('../services/stripe');
 const usdcService = require('../services/usdc');
-const { sendPaymentConfirmation } = require('../services/mailer');
+const { sendPaymentConfirmation, sendRefillPaymentAdminNotification } = require('../services/mailer');
+const { refill_requests } = require('../db/schema');
 
 const router = express.Router();
 
@@ -139,6 +140,10 @@ router.post('/:invoiceId/usdc-confirm', validate(usdcConfirmSchema), async (req,
     } catch (mailErr) {
       console.error('Payment email failed:', mailErr.message);
     }
+    try {
+      const [refillReq] = await db.select().from(refill_requests).where(eq(refill_requests.order_id, order.id));
+      if (refillReq) await sendRefillPaymentAdminNotification(patient, order, updated);
+    } catch (e) { console.error('Refill admin notify failed:', e.message); }
 
     return res.json({ ok: true, invoice: updated });
   } catch (err) {

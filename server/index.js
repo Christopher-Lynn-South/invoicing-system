@@ -84,6 +84,7 @@ app.use('/api/pay', require('./routes/payments'));
 app.use('/api/reminders', require('./routes/reminders'));
 app.use('/reorder', require('./routes/reminders'));
 app.use('/api/import', require('./routes/import'));
+app.use('/refill', require('./routes/refill'));
 
 // ─── Health checks ────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {

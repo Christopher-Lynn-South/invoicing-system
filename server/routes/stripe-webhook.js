@@ -3,7 +3,8 @@ const { db } = require('../db');
 const { invoices, sales_orders, patients } = require('../db/schema');
 const { eq } = require('drizzle-orm');
 const stripeService = require('../services/stripe');
-const { sendPaymentConfirmation } = require('../services/mailer');
+const { sendPaymentConfirmation, sendRefillPaymentAdminNotification } = require('../services/mailer');
+const { refill_requests } = require('../db/schema');
 
 const router = express.Router();
 
@@ -67,6 +68,16 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
           await sendPaymentConfirmation(customer, order, updated, method);
         } catch (mailErr) {
           console.error('Payment confirmation email failed:', mailErr.message);
+        }
+        // If this order came from a refill request, notify admin to ship
+        try {
+          const [refillReq] = await db.select().from(refill_requests)
+            .where(eq(refill_requests.order_id, order.id));
+          if (refillReq) {
+            await sendRefillPaymentAdminNotification(customer, order, updated);
+          }
+        } catch (refillErr) {
+          console.error('Refill admin notification failed (non-fatal):', refillErr.message);
         }
       }
     } catch (dbErr) {

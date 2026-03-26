@@ -10,6 +10,14 @@ const EMPTY_FORM = {
   last_fill_qty_mg: '', last_fill_date: new Date().toISOString().split('T')[0],
 };
 
+function nextBusinessDay() {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
+  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  return d.toISOString().split('T')[0];
+}
+
 function calcPreviewDays(form) {
   const mg = parseFloat(form.dosage_mg);
   const times = parseFloat(form.doses_per_freq || 1);
@@ -30,6 +38,9 @@ export default function Reminders() {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [requestModal, setRequestModal] = useState(null); // reminder rule being requested
+  const [requestForm, setRequestForm] = useState({ proposed_ship_date: nextBusinessDay(), channel: 'email' });
+  const [sendingRequest, setSendingRequest] = useState(false);
 
   useEffect(() => {
     fetchReminders();
@@ -80,6 +91,20 @@ export default function Reminders() {
     }
   }
 
+  async function sendRefillRequest(e) {
+    e.preventDefault();
+    setSendingRequest(true);
+    try {
+      const { data } = await api.post(`/reminders/${requestModal.id}/send-refill-request`, requestForm);
+      addToast(`Refill request sent via ${requestForm.channel}`, 'success');
+      setRequestModal(null);
+      fetchReminders();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to send request', 'error');
+    }
+    setSendingRequest(false);
+  }
+
   const overdue  = reminders.filter(r => r.overdue);
   const dueSoon  = reminders.filter(r => !r.overdue && r.due_soon);
   const normal   = reminders.filter(r => !r.overdue && !r.due_soon);
@@ -111,15 +136,15 @@ export default function Reminders() {
           {rule.last_reminded_at ? fmtDate(rule.last_reminded_at) : 'Never'}
         </td>
         <td style={{ padding: '12px 16px' }}>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <a href={`/reorder/${rule.id}`} target="_blank" rel="noreferrer" style={{
-              fontSize: 12, background: 'var(--accent)', color: '#fff',
-              borderRadius: 6, padding: '4px 10px', textDecoration: 'none',
-            }}>+ Order</a>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <button onClick={() => { setRequestModal(rule); setRequestForm({ proposed_ship_date: nextBusinessDay(), channel: 'email' }); }} style={{
+              fontSize: 12, background: 'var(--success)', color: '#fff',
+              border: 'none', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontWeight: 600,
+            }}>Send Refill Request</button>
             <button onClick={() => sendNow(rule.id)} style={{
               fontSize: 12, background: 'none', border: '1px solid var(--border)',
               color: 'var(--text-secondary)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
-            }}>Email Now</button>
+            }}>Email Reminder</button>
           </div>
         </td>
       </tr>
@@ -182,6 +207,63 @@ export default function Reminders() {
           </div>
         </div>
       ))}
+
+      {/* Send Refill Request Modal */}
+      <Modal open={!!requestModal} onClose={() => setRequestModal(null)} title={`Send Refill Request — ${requestModal?.patient_name}`}>
+        {requestModal && (
+          <form onSubmit={sendRefillRequest}>
+            <div style={{ background: 'var(--bg-elevated)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13 }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{requestModal.product_name}</div>
+              {requestModal.dosage_mg && (
+                <div style={{ color: 'var(--text-muted)' }}>
+                  {requestModal.dosage_mg} mg × {requestModal.doses_per_freq || 1}/{requestModal.dosage_freq === 'weekly' ? 'week' : 'day'}
+                  {requestModal.days_supply ? ` — ${requestModal.days_supply} day supply` : ''}
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Proposed Ship Date</label>
+              <input type="date" value={requestForm.proposed_ship_date}
+                onChange={e => setRequestForm(f => ({ ...f, proposed_ship_date: e.target.value }))}
+                style={{ width: '100%' }} />
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>FedEx Priority Overnight — next business day delivery</div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>Send via</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[['email', '✉ Email'], ['sms', '📱 SMS'], ['both', '✉+📱 Both']].map(([val, label]) => (
+                  <button key={val} type="button" onClick={() => setRequestForm(f => ({ ...f, channel: val }))}
+                    style={{
+                      flex: 1, padding: '8px', border: `2px solid ${requestForm.channel === val ? 'var(--accent)' : 'var(--border)'}`,
+                      borderRadius: 8, background: requestForm.channel === val ? 'var(--accent-light)' : 'var(--bg-elevated)',
+                      color: requestForm.channel === val ? 'var(--accent)' : 'var(--text-secondary)',
+                      cursor: 'pointer', fontSize: 13, fontWeight: requestForm.channel === val ? 600 : 400,
+                    }}>{label}
+                  </button>
+                ))}
+              </div>
+              {requestForm.channel !== 'email' && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>SMS requires TWILIO_* env vars to be configured</div>
+              )}
+            </div>
+
+            <div style={{ background: 'var(--accent)11', border: '1px solid var(--accent)33', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+              The patient will receive an email/SMS with <strong>Yes, Ship My Refill</strong> and <strong>No Thanks</strong> buttons.
+              On confirmation, an order and invoice are automatically created and sent to the patient for payment.
+              You'll receive an email notification when they confirm and again when payment clears.
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setRequestModal(null)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
+              <button type="submit" disabled={sendingRequest} style={{ background: 'var(--success)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600, opacity: sendingRequest ? 0.7 : 1 }}>
+                {sendingRequest ? 'Sending…' : 'Send Request'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       <Modal open={showNew} onClose={() => { setShowNew(false); setForm(EMPTY_FORM); }} title="New Refill Reminder">
         <form onSubmit={createReminder}>

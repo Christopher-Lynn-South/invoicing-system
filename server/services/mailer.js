@@ -211,6 +211,117 @@ async function sendReminderEmail(patient, product, rule) {
   });
 }
 
+function fmtAddr(a) {
+  if (!a) return 'No address on file';
+  return [a.street, a.street2, [a.city, a.state, a.zip].filter(Boolean).join(', '), a.country]
+    .filter(Boolean).join('<br>');
+}
+
+async function sendRefillRequestEmail(patient, product, request) {
+  if (!patient.email) return;
+  const baseUrl = getBaseUrl();
+  const confirmUrl = `${baseUrl}/refill/confirm/${request.token}`;
+  const declineUrl = `${baseUrl}/refill/decline/${request.token}`;
+  const shipDate = request.proposed_ship_date
+    ? new Date(request.proposed_ship_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+    : 'as soon as possible';
+  await getTransporter().sendMail({
+    from: getFrom(),
+    to: patient.email,
+    subject: `Refill ready for ${product.name} — confirm your shipment`,
+    html: htmlWrap(`
+      <h2>Time to Refill Your Prescription</h2>
+      <p>Dear ${escapeHtml(patient.name)},</p>
+      <p>Your <strong>${escapeHtml(product.name)}</strong> refill is ready to ship.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
+        <tr><td style="padding:6px 0;color:#6b7280;width:140px">Ship date:</td><td><strong>${escapeHtml(shipDate)}</strong></td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Service:</td><td><strong>FedEx Priority Overnight</strong></td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top">Ship to:</td><td>${fmtAddr(request.ship_address)}</td></tr>
+      </table>
+      <p>Is this address correct and would you like us to proceed?</p>
+      <div style="margin:24px 0;display:flex;gap:12px">
+        <a href="${confirmUrl}" style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:bold;font-size:16px;margin-right:12px">
+          ✓ Yes, Ship My Refill
+        </a>
+        <a href="${declineUrl}" style="display:inline-block;background:#e5e7eb;color:#374151;text-decoration:none;padding:14px 24px;border-radius:6px;font-weight:bold;font-size:16px">
+          ✗ No Thanks
+        </a>
+      </div>
+      <p style="font-size:12px;color:#9ca3af">This link expires in 7 days. If the address above is wrong, please contact us before confirming.</p>
+      <div class="footer">${escapeHtml(getCompanyName())} · ${escapeHtml(getCompanyEmail())}</div>
+    `),
+  });
+}
+
+async function sendRefillRequestSMS(patient, product, request) {
+  const sid = process.env.TWILIO_ACCOUNT_SID;
+  const auth = process.env.TWILIO_AUTH_TOKEN;
+  const from = process.env.TWILIO_FROM_NUMBER;
+  if (!sid || !auth || !from || !patient.phone) return;
+
+  const twilio = require('twilio')(sid, auth);
+  const confirmUrl = `${getBaseUrl()}/refill/confirm/${request.token}`;
+  const addrLine = request.ship_address
+    ? `${request.ship_address.street || ''}, ${request.ship_address.city || ''} ${request.ship_address.state || ''}`.trim().replace(/^,\s*/, '')
+    : 'address on file';
+  const shipDate = request.proposed_ship_date
+    ? new Date(request.proposed_ship_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : 'ASAP';
+
+  await twilio.messages.create({
+    from,
+    to: patient.phone,
+    body: `Hi ${patient.name}, your ${product.name} refill is ready. Ship ${shipDate} via FedEx Overnight to ${addrLine}. To confirm: ${confirmUrl}`,
+  });
+}
+
+async function sendRefillConfirmedAdminNotification(patient, product, order, invoice, shipAddress) {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (!adminEmail) return;
+  const baseUrl = getBaseUrl();
+  const orderUrl = `${baseUrl}/orders/${order.id}`;
+  await getTransporter().sendMail({
+    from: getFrom(),
+    to: adminEmail,
+    subject: `🟢 Refill confirmed — ${patient.name} paid, ready to ship`,
+    html: htmlWrap(`
+      <h2>Refill Confirmed — Action Required</h2>
+      <p><strong>${escapeHtml(patient.name)}</strong> has confirmed their refill and an invoice has been sent for payment.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
+        <tr><td style="padding:6px 0;color:#6b7280;width:140px">Patient:</td><td><strong>${escapeHtml(patient.name)}</strong></td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Product:</td><td>${escapeHtml(product.name)}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Order #:</td><td>${escapeHtml(order.order_number)}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Invoice:</td><td>${escapeHtml(invoice.invoice_number)} — $${parseFloat(invoice.total).toFixed(2)}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top">Ship to:</td><td>${fmtAddr(shipAddress)}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Service:</td><td>FedEx Priority Overnight</td></tr>
+      </table>
+      <p><strong>Next steps:</strong> Once payment clears, create the FedEx label and ship.</p>
+      <a href="${orderUrl}" class="btn">View Order</a>
+      <div class="footer">OrderFlow · Automated Refill System</div>
+    `),
+  });
+}
+
+async function sendRefillPaymentAdminNotification(patient, order, invoice) {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (!adminEmail) return;
+  const baseUrl = getBaseUrl();
+  const orderUrl = `${baseUrl}/orders/${order.id}`;
+  await getTransporter().sendMail({
+    from: getFrom(),
+    to: adminEmail,
+    subject: `💰 Payment received — ${patient.name} refill ready to ship`,
+    html: htmlWrap(`
+      <h2>Payment Received — Ship Now</h2>
+      <p><strong>${escapeHtml(patient.name)}</strong> has paid invoice <strong>${escapeHtml(invoice.invoice_number)}</strong>.</p>
+      <p>Amount: <strong>$${parseFloat(invoice.total).toFixed(2)} USD</strong></p>
+      <p>Please create the FedEx Priority Overnight label and ship this order.</p>
+      <a href="${orderUrl}" class="btn">View Order &amp; Create Label</a>
+      <div class="footer">OrderFlow · Automated Refill System</div>
+    `),
+  });
+}
+
 // Generic sendMail helper used by patient-auth and settings test
 async function sendMail(options) {
   await getTransporter().sendMail({ from: getFrom(), ...options });
@@ -253,4 +364,8 @@ module.exports = {
   sendAdminAlert,
   sendReminderEmail,
   sendCustomEmail,
+  sendRefillRequestEmail,
+  sendRefillRequestSMS,
+  sendRefillConfirmedAdminNotification,
+  sendRefillPaymentAdminNotification,
 };
