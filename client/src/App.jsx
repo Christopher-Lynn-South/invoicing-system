@@ -76,7 +76,7 @@ export default function App() {
         <Route path="/pay/:invoiceId" element={<PayPage />} />
 
         {/* Customer portal */}
-        <Route path="/customer/login" element={<PatientLogin />} />
+        <Route path="/customer/login" element={<Navigate to="/login" replace />} />
         <Route path="/customer/forgot-password" element={<PatientForgotPassword />} />
         <Route path="/customer/set-password" element={<PatientSetPassword />} />
         <Route path="/customer/portal" element={<RequirePatientAuth><PatientPortal /></RequirePatientAuth>} />
