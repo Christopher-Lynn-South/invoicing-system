@@ -589,13 +589,42 @@ export default function OrderDetail() {
             <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>Invoice</h2>
             {!hasInvoice ? (
               <div>
-                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>No invoice generated yet.</p>
+                {/* Pre-invoice totals preview */}
+                {(() => {
+                  const invoiceSubtotal = Math.round(subtotal * 1.039 * 100) / 100;
+                  const shipCost = shippingQuote?.net_charge ? parseFloat(shippingQuote.net_charge) : 0;
+                  const expectedTotal = invoiceSubtotal + shipCost;
+                  return (
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Items subtotal</span>
+                        <span style={{ fontFamily: 'var(--brand-mono)' }}>{fmtCurrency(invoiceSubtotal)}</span>
+                      </div>
+                      {shipCost > 0 ? (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8 }}>
+                          <span style={{ color: 'var(--success)', fontWeight: 600 }}>
+                            ✓ Shipping ({SERVICE_LABELS[shippingQuote.service_type] || shippingQuote.service_type})
+                          </span>
+                          <span style={{ color: 'var(--success)', fontWeight: 600, fontFamily: 'var(--brand-mono)' }}>{fmtCurrency(shipCost)}</span>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: 'var(--warning)', marginBottom: 8, padding: '6px 10px', background: 'var(--warning)11', borderRadius: 6 }}>
+                          ⚠ No shipping quote saved — get a FedEx quote above before generating the invoice.
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, paddingTop: 10, borderTop: '1px solid var(--border)', marginTop: 4 }}>
+                        <span>Expected Total</span>
+                        <span style={{ fontFamily: 'var(--brand-mono)', color: 'var(--success)' }}>{fmtCurrency(expectedTotal)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {order.status === 'draft' && (
                   <button onClick={generateInvoice} disabled={generatingInvoice} style={{
                     background: 'var(--accent)', color: '#fff', border: 'none',
-                    borderRadius: 8, padding: '8px 20px', fontWeight: 600, fontSize: 13,
+                    borderRadius: 8, padding: '8px 20px', fontWeight: 600, fontSize: 13, width: '100%',
                   }}>
-                    {generatingInvoice ? 'Generating…' : 'Generate Invoice'}
+                    {generatingInvoice ? 'Generating…' : 'Generate & Send Invoice'}
                   </button>
                 )}
               </div>

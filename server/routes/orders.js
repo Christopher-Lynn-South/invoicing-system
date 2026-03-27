@@ -497,7 +497,7 @@ router.patch('/:id/shipping-quote', requireLogin, async (req, res) => {
       const newTotal = (subtotal + shipping + fee).toFixed(2);
 
       const [updatedInvoice] = await db.update(invoices)
-        .set({ shipping_charge: shipping.toFixed(2), total: newTotal, updated_at: new Date() })
+        .set({ shipping_charge: shipping.toFixed(2), total: newTotal })
         .where(eq(invoices.id, invoice.id))
         .returning();
 
