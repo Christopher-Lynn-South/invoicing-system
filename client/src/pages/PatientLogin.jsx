@@ -45,7 +45,12 @@ export default function PatientLogin() {
               style={{ width: '100%' }} placeholder="your@email.com" />
           </div>
           <div style={{ marginBottom: 24 }}>
-            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Password</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+              <label style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Password</label>
+              <Link to="/customer/forgot-password" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>
+                Forgot / Set password?
+              </Link>
+            </div>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
               style={{ width: '100%' }} />
           </div>

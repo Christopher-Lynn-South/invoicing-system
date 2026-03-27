@@ -28,6 +28,8 @@ const patients = pgTable('patients', {
   active_prescription_id: uuid('active_prescription_id'),
   password_hash: text('password_hash'),
   portal_enabled: boolean('portal_enabled').notNull().default(false),
+  reset_token: text('reset_token'),
+  reset_token_expires_at: timestamp('reset_token_expires_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
   updated_at: timestamp('updated_at', { withTimezone: true }).default(sql`now()`),
 });

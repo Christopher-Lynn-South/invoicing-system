@@ -7,6 +7,8 @@ import Layout from './components/Layout';
 import Toast from './components/Toast';
 import Login from './pages/Login';
 import PatientLogin from './pages/PatientLogin';
+import PatientForgotPassword from './pages/PatientForgotPassword';
+import PatientSetPassword from './pages/PatientSetPassword';
 import PatientPortal from './pages/PatientPortal';
 import CustomerInvoiceDetail from './pages/CustomerInvoiceDetail';
 import Dashboard from './pages/Dashboard';
@@ -75,6 +77,8 @@ export default function App() {
 
         {/* Customer portal */}
         <Route path="/customer/login" element={<PatientLogin />} />
+        <Route path="/customer/forgot-password" element={<PatientForgotPassword />} />
+        <Route path="/customer/set-password" element={<PatientSetPassword />} />
         <Route path="/customer/portal" element={<RequirePatientAuth><PatientPortal /></RequirePatientAuth>} />
         <Route path="/customer/portal/invoice/:id" element={<RequirePatientAuth><CustomerInvoiceDetail /></RequirePatientAuth>} />
 
