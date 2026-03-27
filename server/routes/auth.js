@@ -74,6 +74,7 @@ router.post('/change-password', requireLogin, async (req, res) => {
 
   try {
     const [user] = await db.select().from(admin_users).where(eq(admin_users.id, req.session.adminId)).limit(1);
+    if (!user) return res.status(404).json({ error: 'NOT_FOUND', message: 'Account not found.' });
     const valid = await bcrypt.compare(current_password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Current password incorrect.' });
 

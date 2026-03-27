@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { db } = require('../db');
 const { invoices, sales_orders, order_items, products, patients, shipments } = require('../db/schema');
-const { eq, sql, isNull } = require('drizzle-orm');
+const { eq, sql, isNull, and } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { generateInvoicePDF } = require('../services/pdf');
 const { sendInvoiceEmail } = require('../services/mailer');
@@ -50,8 +50,9 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
       return res.status(400).json({ error: 'INVALID_STATUS', message: 'Order must be draft or pending_payment.' });
     }
 
-    // Check for existing invoice
-    const [existing] = await db.select().from(invoices).where(eq(invoices.order_id, order.id));
+    // Check for existing non-deleted invoice
+    const [existing] = await db.select().from(invoices)
+      .where(and(eq(invoices.order_id, order.id), isNull(invoices.deleted_at)));
     if (existing) return res.json(existing);
 
     const items = await db.select({
@@ -189,7 +190,8 @@ router.get('/invoices/by-token/:token', async (req, res) => {
 // GET /api/invoices/:id/detail  (admin — full detail with shipment)
 router.get('/invoices/:id/detail', requireLogin, async (req, res) => {
   try {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+    const [invoice] = await db.select().from(invoices)
+      .where(and(eq(invoices.id, req.params.id), isNull(invoices.deleted_at)));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
 
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
@@ -221,7 +223,8 @@ router.get('/invoices/:id/detail', requireLogin, async (req, res) => {
 // GET /api/invoices/:id  (PUBLIC — no auth required)
 router.get('/invoices/:id', async (req, res) => {
   try {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+    const [invoice] = await db.select().from(invoices)
+      .where(and(eq(invoices.id, req.params.id), isNull(invoices.deleted_at)));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
 
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
@@ -257,7 +260,7 @@ router.get('/invoices/:id', async (req, res) => {
 // PATCH /api/invoices/:id  — admin update pay_status (and sync order status)
 router.patch('/invoices/:id', requireLogin, async (req, res) => {
   try {
-    const { pay_status, notes } = req.body;
+    const { pay_status } = req.body;
     const VALID_STATUSES = ['pending', 'paid', 'failed', 'waived', 'voided', 'cancelled'];
 
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));

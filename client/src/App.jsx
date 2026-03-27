@@ -6,7 +6,6 @@ import api from './lib/api';
 import Layout from './components/Layout';
 import Toast from './components/Toast';
 import Login from './pages/Login';
-import PatientLogin from './pages/PatientLogin';
 import PatientForgotPassword from './pages/PatientForgotPassword';
 import PatientSetPassword from './pages/PatientSetPassword';
 import PatientPortal from './pages/PatientPortal';
@@ -34,7 +33,7 @@ function RequireAuth({ children }) {
 function RequirePatientAuth({ children }) {
   const patientUser = useOrderStore(s => s.patientUser);
   if (patientUser === undefined) return null;
-  if (!patientUser) return <Navigate to="/customer/login" replace />;
+  if (!patientUser) return <Navigate to="/login" replace />;
   return children;
 }
 

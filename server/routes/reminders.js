@@ -269,8 +269,8 @@ router.get('/shipments/exceptions', requireLogin, async (req, res) => {
   }
 });
 
-// Reorder link — GET /reorder/:ruleId
-router.get('/reorder/:ruleId', requireLogin, async (req, res) => {
+// Reorder link — GET /reorder/:ruleId  (mounted at /reorder in index.js)
+router.get('/:ruleId', requireLogin, async (req, res) => {
   try {
     const [rule] = await db.select().from(reminder_rules).where(eq(reminder_rules.id, req.params.ruleId));
     if (!rule) return res.status(404).json({ error: 'NOT_FOUND' });
