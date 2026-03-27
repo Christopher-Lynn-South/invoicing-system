@@ -33,7 +33,7 @@ export default function PatientSetPassword() {
     try {
       await api.post('/customer/reset-password', { token, password });
       setDone(true);
-      setTimeout(() => navigate('/customer/login'), 3000);
+      setTimeout(() => navigate('/login'), 3000);
     } catch (err) {
       setError(err.response?.data?.message || 'This link is invalid or has expired.');
     }
@@ -65,7 +65,7 @@ export default function PatientSetPassword() {
             <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 12 }}>
               Password set! Redirecting to login…
             </p>
-            <Link to="/customer/login" style={{ color: 'var(--accent)', fontSize: 13 }}>Go to login →</Link>
+            <Link to="/login" style={{ color: 'var(--accent)', fontSize: 13 }}>Go to login →</Link>
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
