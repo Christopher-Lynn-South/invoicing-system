@@ -2,7 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { db } = require('../db');
 const { invoices, sales_orders, order_items, products, patients, shipments } = require('../db/schema');
-const { eq, sql } = require('drizzle-orm');
+const { eq, sql, isNull } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { generateInvoicePDF } = require('../services/pdf');
 const { sendInvoiceEmail } = require('../services/mailer');
@@ -123,6 +123,7 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
 // GET /api/invoices  (list all invoices — admin)
 router.get('/invoices', requireLogin, async (req, res) => {
   try {
+    const showDeleted = req.query.deleted === 'true';
     const rows = await db.select({
       invoice: invoices,
       order_number: sales_orders.order_number,
@@ -131,6 +132,7 @@ router.get('/invoices', requireLogin, async (req, res) => {
       .from(invoices)
       .leftJoin(sales_orders, eq(invoices.order_id, sales_orders.id))
       .leftJoin(patients, eq(sales_orders.patient_id, patients.id))
+      .where(showDeleted ? undefined : isNull(invoices.deleted_at))
       .orderBy(invoices.created_at);
     return res.json(rows.map(r => ({
       ...r.invoice,
@@ -256,7 +258,7 @@ router.get('/invoices/:id', async (req, res) => {
 router.patch('/invoices/:id', requireLogin, async (req, res) => {
   try {
     const { pay_status, notes } = req.body;
-    const VALID_STATUSES = ['pending', 'paid', 'failed', 'waived'];
+    const VALID_STATUSES = ['pending', 'paid', 'failed', 'waived', 'voided', 'cancelled'];
 
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
@@ -281,7 +283,10 @@ router.patch('/invoices/:id', requireLogin, async (req, res) => {
 
     // Sync sales order status when payment status changes
     if (pay_status !== undefined) {
-      const orderStatus = pay_status === 'paid' ? 'paid' : 'pending_payment';
+      let orderStatus;
+      if (pay_status === 'paid') orderStatus = 'paid';
+      else if (pay_status === 'voided' || pay_status === 'cancelled') orderStatus = 'cancelled';
+      else orderStatus = 'pending_payment';
       await db.update(sales_orders)
         .set({ status: orderStatus, updated_at: new Date() })
         .where(eq(sales_orders.id, invoice.order_id));
@@ -290,6 +295,24 @@ router.patch('/invoices/:id', requireLogin, async (req, res) => {
     return res.json(updated);
   } catch (err) {
     console.error('Invoice PATCH error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+});
+
+// DELETE /api/invoices/:id  — soft delete
+router.delete('/invoices/:id', requireLogin, async (req, res) => {
+  try {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
+    if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
+    if (invoice.pay_status === 'paid') {
+      return res.status(400).json({ error: 'CANNOT_DELETE_PAID', message: 'Paid invoices cannot be deleted. Void or cancel instead.' });
+    }
+    await db.update(invoices)
+      .set({ deleted_at: new Date() })
+      .where(eq(invoices.id, invoice.id));
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Invoice DELETE error:', err);
     return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
   }
 });

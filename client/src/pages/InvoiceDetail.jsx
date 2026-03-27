@@ -4,7 +4,18 @@ import api from '../lib/api';
 import useOrderStore from '../store/useOrderStore';
 import { fmtCurrency, fmtDate, fmtDatetime } from '../lib/utils';
 
-const PAY_STATUS_OPTIONS = ['pending', 'paid', 'failed', 'waived'];
+const PAY_STATUS_OPTIONS = ['pending', 'paid', 'failed', 'waived', 'voided', 'cancelled'];
+
+const TERMINAL_STATUSES = ['voided', 'cancelled'];
+
+const STATUS_COLOR_MAP = {
+  paid: 'var(--success)',
+  pending: 'var(--warning)',
+  failed: 'var(--danger)',
+  waived: 'var(--text-muted)',
+  voided: 'var(--text-muted)',
+  cancelled: 'var(--danger)',
+};
 
 const PAY_STATUS_COLOR = {
   paid: 'var(--success)',
@@ -22,7 +33,7 @@ const SHIP_STATUS_LABEL = {
 };
 
 function StatusBadge({ status, color }) {
-  const c = color || PAY_STATUS_COLOR[status] || 'var(--text-muted)';
+  const c = color || STATUS_COLOR_MAP?.[status] || PAY_STATUS_COLOR[status] || 'var(--text-muted)';
   return (
     <span style={{
       fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1,
@@ -60,6 +71,7 @@ export default function InvoiceDetail() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editStatus, setEditStatus] = useState(null); // null = not editing
+  const [confirm, setConfirm] = useState(null); // { action: 'void'|'cancel'|'delete', label, message }
 
   async function load() {
     try {
@@ -72,6 +84,27 @@ export default function InvoiceDetail() {
   }
 
   useEffect(() => { load(); }, [id]);
+
+  async function runConfirmedAction() {
+    if (!confirm) return;
+    setSaving(true);
+    try {
+      if (confirm.action === 'delete') {
+        await api.delete(`/invoices/${id}`);
+        addToast('Invoice deleted', 'success');
+        navigate('/invoices');
+      } else {
+        const status = confirm.action === 'void' ? 'voided' : 'cancelled';
+        await api.patch(`/invoices/${id}`, { pay_status: status });
+        addToast(`Invoice marked as ${status}`, 'success');
+        load();
+      }
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Action failed', 'error');
+    }
+    setSaving(false);
+    setConfirm(null);
+  }
 
   async function saveStatus() {
     if (!editStatus || editStatus === data.pay_status) { setEditStatus(null); return; }
@@ -109,18 +142,66 @@ export default function InvoiceDetail() {
       </div>
 
       {/* Page header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
         <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 26 }}>{data.invoice_number}</h1>
-        <StatusBadge status={data.pay_status} />
-        {data.pdf_url && (
-          <a href={data.pdf_url} target="_blank" rel="noreferrer" style={{
-            marginLeft: 'auto', fontSize: 12, color: 'var(--accent)', border: '1px solid var(--accent)',
-            padding: '5px 14px', borderRadius: 6, textDecoration: 'none', fontWeight: 600,
-          }}>
-            PDF ↗
-          </a>
-        )}
+        <StatusBadge status={data.pay_status} color={STATUS_COLOR_MAP[data.pay_status]} />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {data.pdf_url && (
+            <a href={data.pdf_url} target="_blank" rel="noreferrer" style={{
+              fontSize: 12, color: 'var(--accent)', border: '1px solid var(--accent)',
+              padding: '5px 14px', borderRadius: 6, textDecoration: 'none', fontWeight: 600,
+            }}>
+              PDF ↗
+            </a>
+          )}
+          {data.pay_status !== 'paid' && !TERMINAL_STATUSES.includes(data.pay_status) && (
+            <>
+              <button
+                onClick={() => setConfirm({ action: 'void', label: 'Void Invoice', message: 'Mark this invoice as void? This cannot be undone. The order will be cancelled.' })}
+                style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--text-muted)', color: 'var(--text-muted)', background: 'none', fontWeight: 600 }}
+              >
+                Void
+              </button>
+              <button
+                onClick={() => setConfirm({ action: 'cancel', label: 'Cancel Invoice', message: 'Cancel this invoice? The order will also be cancelled.' })}
+                style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--warning)', color: 'var(--warning)', background: 'none', fontWeight: 600 }}
+              >
+                Cancel
+              </button>
+            </>
+          )}
+          {data.pay_status !== 'paid' && (
+            <button
+              onClick={() => setConfirm({ action: 'delete', label: 'Delete Invoice', message: 'Permanently hide this invoice? It will no longer appear in the list. This cannot be undone.' })}
+              style={{ fontSize: 12, padding: '5px 14px', borderRadius: 6, cursor: 'pointer', border: '1px solid var(--danger)', color: 'var(--danger)', background: 'none', fontWeight: 600 }}
+            >
+              Delete
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Confirm dialog */}
+      {confirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 28, maxWidth: 420, width: '90%' }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>{confirm.label}</h3>
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24, lineHeight: 1.5 }}>{confirm.message}</p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirm(null)} style={{ padding: '8px 20px', borderRadius: 8, border: '1px solid var(--border)', background: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button
+                onClick={runConfirmedAction}
+                disabled={saving}
+                style={{ padding: '8px 20px', borderRadius: 8, border: 'none', background: confirm.action === 'delete' ? 'var(--danger)' : 'var(--warning)', color: '#fff', cursor: 'pointer', fontWeight: 600, opacity: saving ? 0.6 : 1 }}
+              >
+                {saving ? 'Processing…' : confirm.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
 

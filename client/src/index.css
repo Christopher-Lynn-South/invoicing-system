@@ -74,6 +74,7 @@ input::placeholder { color: var(--text-muted); }
 .badge-paid       { background: #10b98122; color: #10b981; border: 1px solid #10b98144; }
 .badge-shipped    { background: #1a56db22; color: #60a5fa; border: 1px solid #1a56db44; }
 .badge-cancelled  { background: #ef444422; color: #ef4444; border: 1px solid #ef444444; }
+.badge-voided     { background: #6b728022; color: #6b7280; border: 1px solid #6b728044; }
 .badge-delivered  { background: #10b98122; color: #10b981; border: 1px solid #10b98144; }
 .badge-exception  { background: #ef444422; color: #ef4444; border: 1px solid #ef444444; }
 

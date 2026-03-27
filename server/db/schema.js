@@ -98,6 +98,7 @@ const invoices = pgTable('invoices', {
   pay_token: text('pay_token').unique(),
   pay_token_expires_at: timestamp('pay_token_expires_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
+  deleted_at: timestamp('deleted_at', { withTimezone: true }),
 });
 
 // ─── shipments ────────────────────────────────────────────────────────────────
