@@ -275,7 +275,7 @@ async function sendRefillRequestSMS(patient, product, request) {
   });
 }
 
-async function sendRefillConfirmedAdminNotification(patient, product, order, invoice, shipAddress) {
+async function sendRefillConfirmedAdminNotification(patient, product, order, shipAddress) {
   const adminEmail = process.env.ADMIN_EMAIL;
   if (!adminEmail) return;
   const baseUrl = getBaseUrl();
@@ -283,20 +283,19 @@ async function sendRefillConfirmedAdminNotification(patient, product, order, inv
   await getTransporter().sendMail({
     from: getFrom(),
     to: adminEmail,
-    subject: `🟢 Refill confirmed — ${patient.name} paid, ready to ship`,
+    subject: `🔔 Refill confirmed — ${patient.name} needs invoice`,
     html: htmlWrap(`
-      <h2>Refill Confirmed — Action Required</h2>
-      <p><strong>${escapeHtml(patient.name)}</strong> has confirmed their refill and an invoice has been sent for payment.</p>
+      <h2>Refill Confirmed — Review &amp; Send Invoice</h2>
+      <p><strong>${escapeHtml(patient.name)}</strong> has confirmed their refill request. A draft order has been created — please review it and send the invoice.</p>
       <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
         <tr><td style="padding:6px 0;color:#6b7280;width:140px">Patient:</td><td><strong>${escapeHtml(patient.name)}</strong></td></tr>
         <tr><td style="padding:6px 0;color:#6b7280">Product:</td><td>${escapeHtml(product.name)}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280">Order #:</td><td>${escapeHtml(order.order_number)}</td></tr>
-        <tr><td style="padding:6px 0;color:#6b7280">Invoice:</td><td>${escapeHtml(invoice.invoice_number)} — $${parseFloat(invoice.total).toFixed(2)}</td></tr>
+        <tr><td style="padding:6px 0;color:#6b7280">Order #:</td><td>${escapeHtml(order.order_number)} (Draft)</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280;vertical-align:top">Ship to:</td><td>${fmtAddr(shipAddress)}</td></tr>
         <tr><td style="padding:6px 0;color:#6b7280">Service:</td><td>FedEx Priority Overnight</td></tr>
       </table>
-      <p><strong>Next steps:</strong> Once payment clears, create the FedEx label and ship.</p>
-      <a href="${orderUrl}" class="btn">View Order</a>
+      <p><strong>Next steps:</strong> Open the order, review line items, then send the invoice to the patient.</p>
+      <a href="${orderUrl}" class="btn">Review Order &amp; Send Invoice</a>
       <div class="footer">OrderFlow · Automated Refill System</div>
     `),
   });

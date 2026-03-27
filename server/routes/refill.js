@@ -1,17 +1,13 @@
 const express = require('express');
-const crypto = require('crypto');
 const { db } = require('../db');
 const {
   refill_requests, reminder_rules, patients, products,
-  sales_orders, order_items, invoices, shipments,
+  sales_orders, order_items,
 } = require('../db/schema');
-const { eq, desc, sql } = require('drizzle-orm');
+const { eq, sql } = require('drizzle-orm');
 const {
-  sendInvoiceEmail,
   sendRefillConfirmedAdminNotification,
 } = require('../services/mailer');
-const path = require('path');
-const fs = require('fs');
 
 const router = express.Router();
 
@@ -54,20 +50,6 @@ async function generateOrderNumber() {
     : `${prefix}001`;
 }
 
-async function generateInvoiceNumber() {
-  const year = new Date().getFullYear();
-  const prefix = `INV-${year}-`;
-  const result = await db.execute(
-    sql`SELECT invoice_number FROM invoices WHERE invoice_number LIKE ${prefix + '%'} ORDER BY invoice_number DESC LIMIT 1`
-  );
-  const rows = result.rows || result;
-  return rows.length
-    ? `${prefix}${String(parseInt(rows[0].invoice_number.split('-')[2], 10) + 1).padStart(4, '0')}`
-    : `${prefix}0001`;
-}
-
-function generatePayToken() { return crypto.randomBytes(32).toString('hex'); }
-function payTokenExpiresAt(days) { return new Date(Date.now() + days * 86400000); }
 
 // ── GET /refill/confirm/:token ─────────────────────────────────────────────────
 router.get('/confirm/:token', async (req, res) => {
@@ -97,23 +79,23 @@ router.get('/confirm/:token', async (req, res) => {
       const [product] = await db.select().from(products).where(eq(products.id, request.product_id));
       return res.send(htmlPage('Refill Confirmed', `
         <div class="icon">✅</div>
-        <h1>Refill Confirmed!</h1>
-        <p>Your ${product.name} refill was confirmed. An invoice has been sent to ${patient.email}. Please pay to complete your order.</p>
+        <h1>Already Confirmed!</h1>
+        <p>Your ${product.name} refill request was received. Our team is reviewing your order and will send an invoice shortly to ${patient.email}.</p>
       `));
     }
 
-    // ── First confirmation — create order + invoice ─────────────────────────
+    // ── First confirmation — create draft sales order only ──────────────────
     const [patient] = await db.select().from(patients).where(eq(patients.id, request.patient_id));
     const [product] = await db.select().from(products).where(eq(products.id, request.product_id));
     const [rule] = await db.select().from(reminder_rules).where(eq(reminder_rules.id, request.rule_id));
 
-    // Create sales order
+    // Create sales order in draft — admin reviews before sending invoice
     const order_number = await generateOrderNumber();
     const [order] = await db.insert(sales_orders).values({
       order_number,
       patient_id: patient.id,
-      status: 'pending_payment',
-      notes: `Auto-created from refill confirmation. Ship via FedEx Priority Overnight to confirmed address.`,
+      status: 'draft',
+      notes: `Refill confirmed by patient. Ship via FedEx Priority Overnight.\nRequested ship date: ${request.proposed_ship_date || 'TBD'}\nPlease review and send invoice.`,
       shipping_quote: {
         service_type: 'PRIORITY_OVERNIGHT',
         package_type: 'YOUR_PACKAGING',
@@ -133,26 +115,6 @@ router.get('/confirm/:token', async (req, res) => {
       line_total: unit_price.toFixed(2),
     });
 
-    // Create invoice (gross up 3.9% for CC pricing)
-    const baseSubtotal = unit_price;
-    const subtotal = Math.round(baseSubtotal * 1.039 * 100) / 100;
-    const invoice_number = await generateInvoiceNumber();
-    const due_date = new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]; // 14 days
-    const pay_token = generatePayToken();
-
-    const [invoice] = await db.insert(invoices).values({
-      invoice_number,
-      order_id: order.id,
-      subtotal: subtotal.toFixed(2),
-      shipping_charge: '0.00',
-      processing_fee: '0.00',
-      total: subtotal.toFixed(2),
-      pay_status: 'pending',
-      due_date,
-      pay_token,
-      pay_token_expires_at: payTokenExpiresAt(14),
-    }).returning();
-
     // Update refill request
     await db.update(refill_requests)
       .set({ status: 'confirmed', order_id: order.id, responded_at: new Date() })
@@ -163,20 +125,12 @@ router.get('/confirm/:token', async (req, res) => {
       .set({ last_order_id: order.id, last_reminded_at: new Date() })
       .where(eq(reminder_rules.id, request.rule_id));
 
-    // Generate PDF & send invoice email
+    // Notify admin to review and send invoice
     try {
-      const { generateInvoicePDF } = require('../services/pdf');
-      const invoicesDir = path.join(__dirname, '../../uploads/invoices');
-      fs.mkdirSync(invoicesDir, { recursive: true });
-      const pdfPath = path.join(invoicesDir, `${invoice.id}.pdf`);
-      await generateInvoicePDF({ invoice, order, patient, items: [{ ...{ id: '', order_id: order.id, product_id: product.id, quantity: 1, unit_price: unit_price.toFixed(2), line_total: unit_price.toFixed(2) }, product_name: product.name }] }, pdfPath);
-      await db.update(invoices).set({ pdf_url: `/uploads/invoices/${invoice.id}.pdf`, sent_at: new Date() }).where(eq(invoices.id, invoice.id));
-    } catch (pdfErr) {
-      console.error('PDF generation failed (non-fatal):', pdfErr.message);
+      await sendRefillConfirmedAdminNotification(patient, product, order, request.ship_address);
+    } catch (notifyErr) {
+      console.error('Admin notification failed (non-fatal):', notifyErr.message);
     }
-
-    await sendInvoiceEmail(patient, order, invoice);
-    await sendRefillConfirmedAdminNotification(patient, product, order, invoice, request.ship_address);
 
     const addr = request.ship_address;
     const addrHtml = addr
@@ -186,10 +140,10 @@ router.get('/confirm/:token', async (req, res) => {
     return res.send(htmlPage('Refill Confirmed!', `
       <div class="icon">✅</div>
       <h1>Refill Confirmed!</h1>
-      <p>Thank you, <strong>${patient.name}</strong>! Your ${product.name} refill has been confirmed.</p>
+      <p>Thank you, <strong>${patient.name}</strong>! We've received your ${product.name} refill request.</p>
       ${addrHtml}
-      <p>An invoice has been sent to <strong>${patient.email}</strong>. Please pay to complete your order and we'll ship via FedEx Priority Overnight.</p>
-      <p style="margin-top:8px;font-size:13px;color:#9ca3af">Order ${order.order_number} · Invoice ${invoice.invoice_number}</p>
+      <p>Our team will review your order and send an invoice to <strong>${patient.email}</strong> shortly.</p>
+      <p style="margin-top:8px;font-size:13px;color:#9ca3af">Order ${order.order_number}</p>
     `));
 
   } catch (err) {
