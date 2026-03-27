@@ -109,23 +109,30 @@ router.post('/forgot-password', async (req, res) => {
 
     const link = `${process.env.BASE_URL}/customer/set-password?token=${token}`;
     const isNew = !patient.password_hash;
-    await sendMail({
-      to: patient.email,
-      subject: isNew ? 'Set your portal password' : 'Reset your portal password',
-      html: `
-        <p>Hello ${patient.name},</p>
-        <p>${isNew
-          ? 'Click the button below to set your password and activate your patient portal account.'
-          : 'Click the button below to reset your portal password. This link expires in 2 hours.'
-        }</p>
-        <p style="margin:24px 0">
-          <a href="${link}" style="background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
-            ${isNew ? 'Set Password' : 'Reset Password'}
-          </a>
-        </p>
-        <p style="font-size:12px;color:#6b7280">If you didn't request this, you can safely ignore this email.</p>
-      `,
-    });
+
+    // Email is non-fatal — token is saved regardless
+    try {
+      await sendMail({
+        to: patient.email,
+        subject: isNew ? 'Set your portal password' : 'Reset your portal password',
+        html: `
+          <p>Hello ${patient.name},</p>
+          <p>${isNew
+            ? 'Click the button below to set your password and activate your patient portal account.'
+            : 'Click the button below to reset your portal password. This link expires in 2 hours.'
+          }</p>
+          <p style="margin:24px 0">
+            <a href="${link}" style="background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
+              ${isNew ? 'Set Password' : 'Reset Password'}
+            </a>
+          </p>
+          <p style="font-size:12px;color:#6b7280">If you didn't request this, you can safely ignore this email.</p>
+        `,
+      });
+    } catch (mailErr) {
+      console.error('Forgot password email failed:', mailErr.message);
+      console.error('Reset link (fallback):', link);
+    }
 
     return res.json({ ok: true });
   } catch (err) {
