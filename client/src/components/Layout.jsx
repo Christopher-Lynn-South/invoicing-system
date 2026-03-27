@@ -72,6 +72,25 @@ export default function Layout() {
           ))}
         </nav>
 
+        {/* Customer Portal link */}
+        <div style={{ padding: '8px 16px', borderTop: '1px solid var(--border)' }}>
+          <a
+            href="/customer/login"
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 0', fontSize: 13,
+              color: 'var(--text-muted)', textDecoration: 'none',
+              whiteSpace: 'nowrap',
+            }}
+            title="Open Customer Portal"
+          >
+            <span style={{ fontSize: 16, flexShrink: 0 }}>🔗</span>
+            {sidebarOpen && 'Customer Portal ↗'}
+          </a>
+        </div>
+
         {/* User */}
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', fontSize: 13 }}>
           {sidebarOpen && <div style={{ color: 'var(--text-muted)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.email}</div>}
