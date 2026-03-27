@@ -321,6 +321,25 @@ async function sendRefillPaymentAdminNotification(patient, order, invoice) {
   });
 }
 
+async function sendPatientRefillRequestToAdmin(patient, product, rule) {
+  const adminEmail = getCompanyEmail();
+  if (!adminEmail) return;
+  const remindersUrl = `${getBaseUrl()}/reminders`;
+  await getTransporter().sendMail({
+    from: getFrom(),
+    to: adminEmail,
+    subject: `🔔 Refill requested by ${escapeHtml(patient.name)} — ${escapeHtml(product.name)}`,
+    html: htmlWrap(`
+      <h2>Patient Refill Request</h2>
+      <p><strong>${escapeHtml(patient.name)}</strong> has requested a refill for
+      <strong>${escapeHtml(product.name)}</strong> through their patient portal.</p>
+      <p>Please review their file and send them a refill confirmation link from the Reminders page.</p>
+      <a href="${remindersUrl}" class="btn">Go to Reminders</a>
+      <div class="footer">${escapeHtml(getCompanyName())} · Automated Notification</div>
+    `),
+  });
+}
+
 // Generic sendMail helper used by patient-auth and settings test
 async function sendMail(options) {
   await getTransporter().sendMail({ from: getFrom(), ...options });
@@ -367,4 +386,5 @@ module.exports = {
   sendRefillRequestSMS,
   sendRefillConfirmedAdminNotification,
   sendRefillPaymentAdminNotification,
+  sendPatientRefillRequestToAdmin,
 };

@@ -1,10 +1,12 @@
 // Patient-facing portal routes — require patient session, return only the
 // logged-in patient's own data.
 const express = require('express');
+const fs = require('fs');
 const { db } = require('../db');
-const { patients, sales_orders, order_items, invoices, shipments, products } = require('../db/schema');
-const { eq, desc } = require('drizzle-orm');
+const { patients, sales_orders, order_items, invoices, shipments, products, prescriptions, reminder_rules, refill_requests } = require('../db/schema');
+const { eq, desc, and } = require('drizzle-orm');
 const { requirePatientLogin } = require('../middleware/auth');
+const { sendPatientRefillRequestToAdmin } = require('../services/mailer');
 
 const router = express.Router();
 
@@ -208,6 +210,148 @@ router.get('/shipments', async (req, res) => {
     return res.json(rows);
   } catch (err) {
     console.error('Patient shipments error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── GET /api/customer/prescriptions ──────────────────────────────────────────
+router.get('/prescriptions', async (req, res) => {
+  try {
+    const rows = await db
+      .select({
+        id: prescriptions.id,
+        prescribing_doctor: prescriptions.prescribing_doctor,
+        doctor_phone: prescriptions.doctor_phone,
+        issue_date: prescriptions.issue_date,
+        expiry_date: prescriptions.expiry_date,
+        file_name: prescriptions.file_name,
+        file_mime: prescriptions.file_mime,
+        notes: prescriptions.notes,
+        status: prescriptions.status,
+        created_at: prescriptions.created_at,
+      })
+      .from(prescriptions)
+      .where(and(
+        eq(prescriptions.patient_id, req.session.customerId),
+        eq(prescriptions.status, 'active'),
+      ))
+      .orderBy(desc(prescriptions.created_at));
+    return res.json(rows);
+  } catch (err) {
+    console.error('Customer prescriptions error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── GET /api/customer/prescriptions/:rxId/file ───────────────────────────────
+router.get('/prescriptions/:rxId/file', async (req, res) => {
+  try {
+    const [rx] = await db.select().from(prescriptions)
+      .where(eq(prescriptions.id, req.params.rxId)).limit(1);
+    if (!rx || rx.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+    if (!fs.existsSync(rx.file_path)) {
+      return res.status(404).json({ error: 'FILE_NOT_FOUND' });
+    }
+    const disposition = req.query.download === '1' ? 'attachment' : 'inline';
+    res.setHeader('Content-Type', rx.file_mime);
+    res.setHeader('Content-Disposition', `${disposition}; filename="${rx.file_name}"`);
+    fs.createReadStream(rx.file_path).pipe(res);
+  } catch (err) {
+    console.error('Customer prescription file error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── GET /api/customer/refills ────────────────────────────────────────────────
+router.get('/refills', async (req, res) => {
+  try {
+    const rules = await db
+      .select({
+        id: reminder_rules.id,
+        product_id: reminder_rules.product_id,
+        interval_days: reminder_rules.interval_days,
+        dosage_mg: reminder_rules.dosage_mg,
+        dosage_freq: reminder_rules.dosage_freq,
+        doses_per_freq: reminder_rules.doses_per_freq,
+        last_fill_qty_mg: reminder_rules.last_fill_qty_mg,
+        last_fill_date: reminder_rules.last_fill_date,
+        last_reminded_at: reminder_rules.last_reminded_at,
+        active: reminder_rules.active,
+        created_at: reminder_rules.created_at,
+        product_name: products.name,
+        product_sku: products.sku,
+      })
+      .from(reminder_rules)
+      .leftJoin(products, eq(reminder_rules.product_id, products.id))
+      .where(eq(reminder_rules.patient_id, req.session.customerId));
+
+    // Attach latest refill request per rule
+    const enriched = await Promise.all(rules.map(async rule => {
+      const [latest] = await db
+        .select({
+          id: refill_requests.id,
+          status: refill_requests.status,
+          proposed_ship_date: refill_requests.proposed_ship_date,
+          created_at: refill_requests.created_at,
+          responded_at: refill_requests.responded_at,
+        })
+        .from(refill_requests)
+        .where(eq(refill_requests.rule_id, rule.id))
+        .orderBy(desc(refill_requests.created_at))
+        .limit(1);
+      return { ...rule, latest_request: latest || null };
+    }));
+
+    return res.json(enriched);
+  } catch (err) {
+    console.error('Customer refills error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── POST /api/customer/refills/:ruleId/request ───────────────────────────────
+router.post('/refills/:ruleId/request', async (req, res) => {
+  try {
+    const [rule] = await db.select().from(reminder_rules)
+      .where(eq(reminder_rules.id, req.params.ruleId)).limit(1);
+    if (!rule || rule.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+    const [product] = await db.select().from(products)
+      .where(eq(products.id, rule.product_id)).limit(1);
+    const [patient] = await db
+      .select({ name: patients.name, email: patients.email })
+      .from(patients).where(eq(patients.id, req.session.customerId)).limit(1);
+
+    try {
+      await sendPatientRefillRequestToAdmin(patient, product, rule);
+    } catch (mailErr) {
+      console.error('Refill request admin notify failed (non-fatal):', mailErr.message);
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Customer refill request error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── PATCH /api/customer/refills/:ruleId/pause ───────────────────────────────
+router.patch('/refills/:ruleId/pause', async (req, res) => {
+  try {
+    const [rule] = await db.select().from(reminder_rules)
+      .where(eq(reminder_rules.id, req.params.ruleId)).limit(1);
+    if (!rule || rule.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+    const [updated] = await db.update(reminder_rules)
+      .set({ active: !rule.active })
+      .where(eq(reminder_rules.id, rule.id))
+      .returning();
+    return res.json(updated);
+  } catch (err) {
+    console.error('Customer refill pause error:', err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });
