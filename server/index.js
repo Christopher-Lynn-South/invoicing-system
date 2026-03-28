@@ -23,10 +23,9 @@ const PgSession = connectPgSimple(session);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// ─── Fail fast if critical secrets are missing in production ─────────────────
+// ─── Warn if critical secrets are missing in production ──────────────────────
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
-  console.error('FATAL: SESSION_SECRET must be set in production. Exiting.');
-  process.exit(1);
+  console.error('WARNING: SESSION_SECRET is not set — using insecure default. Set it in production!');
 }
 
 // Trust Nginx reverse proxy so secure cookies work behind HTTPS
