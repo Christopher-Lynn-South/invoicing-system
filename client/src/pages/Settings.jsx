@@ -93,6 +93,7 @@ function ConfigSection({ title, icon, fields, values, onChange, onSave, saving, 
 function StaffManager() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const currentUser = useOrderStore(s => s.user);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -105,7 +106,10 @@ function StaffManager() {
   const [resetMsg, setResetMsg] = useState('');
 
   useEffect(() => {
-    api.get('/auth/users').then(r => setUsers(r.data)).catch(() => {}).finally(() => setLoading(false));
+    api.get('/auth/users')
+      .then(r => setUsers(r.data))
+      .catch(() => setLoadError('Failed to load staff users. Please refresh the page.'))
+      .finally(() => setLoading(false));
   }, []);
 
   async function handleCreate(e) {
@@ -144,6 +148,7 @@ function StaffManager() {
   }
 
   if (loading) return <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading staff…</div>;
+  if (loadError) return <div style={{ color: 'var(--danger)', fontSize: 14, padding: '12px 0' }}>{loadError}</div>;
 
   return (
     <div>

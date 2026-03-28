@@ -45,7 +45,7 @@ export default function Dashboard() {
 
     api.get('/reminders/shipments/exceptions')
       .then(r => setExceptions(r.data || []))
-      .catch(() => {});
+      .catch(err => console.error('Failed to load shipment exceptions:', err));
   }, []);
 
   return (

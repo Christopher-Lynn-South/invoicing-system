@@ -6,6 +6,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const { pool } = require('./db');
 
 // ─── Auth rate limiters ───────────────────────────────────────────────────────
@@ -22,15 +23,24 @@ const PgSession = connectPgSimple(session);
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// ─── Fail fast if critical secrets are missing in production ─────────────────
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  console.error('FATAL: SESSION_SECRET must be set in production. Exiting.');
+  process.exit(1);
+}
+
 // Trust Nginx reverse proxy so secure cookies work behind HTTPS
 app.set('trust proxy', 1);
+
+// ─── Security headers ─────────────────────────────────────────────────────────
+app.use(helmet({ contentSecurityPolicy: false }));
 
 // ─── Stripe webhook needs raw body BEFORE json parser ────────────────────────
 app.use('/api/webhooks/stripe', require('./routes/stripe-webhook'));
 
 // ─── Body parsers ─────────────────────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({
@@ -72,6 +82,8 @@ loadSettings(); // non-blocking; falls back to .env values on DB error
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth/login', authLimiter);
 app.use('/api/customer/login', authLimiter);
+app.use('/api/customer/forgot-password', authLimiter);
+app.use('/api/customer/reset-password', authLimiter);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/customer', require('./routes/patient-auth'));
@@ -115,7 +127,10 @@ if (fs.existsSync(clientDist)) {
 // ─── Error handler ────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  const message = process.env.NODE_ENV === 'production'
+    ? 'An unexpected error occurred'
+    : err.message;
+  res.status(500).json({ error: 'SERVER_ERROR', message });
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────

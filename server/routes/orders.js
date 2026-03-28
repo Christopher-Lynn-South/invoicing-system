@@ -6,6 +6,7 @@ const {
 } = require('../db/schema');
 const { eq, desc, and, inArray, sql } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
+const { z } = require('zod');
 const { validate, orderSchema, shipSchema, updateItemsSchema } = require('../middleware/validate');
 const { generateInvoicePDF } = require('../services/pdf');
 const fedexService = require('../services/fedex');
@@ -171,19 +172,56 @@ router.get('/:id', requireLogin, async (req, res) => {
   }
 });
 
-// DELETE /api/orders/:id (cancel draft only)
+// PATCH /api/orders/:id — edit order header fields (draft only)
+const patchOrderSchema = z.object({
+  patient_id: z.string().uuid().optional(),
+  notes:      z.string().max(5000).optional(),
+}).strict().refine(d => Object.keys(d).length > 0, { message: 'Provide at least one field to update.' });
+
+router.patch('/:id', requireLogin, async (req, res) => {
+  try {
+    const parsed = patchOrderSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0].message });
+    }
+
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
+    if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
+    if (order.status !== 'draft') {
+      return res.status(400).json({ error: 'CANNOT_EDIT', message: 'Only draft orders can be edited.' });
+    }
+
+    const updates = { ...parsed.data, updated_at: new Date() };
+
+    // Verify new patient exists if changing patient
+    if (updates.patient_id) {
+      const [pt] = await db.select({ id: patients.id }).from(patients).where(eq(patients.id, updates.patient_id)).limit(1);
+      if (!pt) return res.status(404).json({ error: 'PATIENT_NOT_FOUND' });
+    }
+
+    const [updated] = await db.update(sales_orders)
+      .set(updates)
+      .where(eq(sales_orders.id, req.params.id))
+      .returning();
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// DELETE /api/orders/:id — hard-delete draft or cancelled orders
 router.delete('/:id', requireLogin, async (req, res) => {
   try {
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
     if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
-    if (order.status !== 'draft') {
-      return res.status(400).json({ error: 'CANNOT_CANCEL', message: 'Only draft orders can be cancelled.' });
+    if (!['draft', 'cancelled'].includes(order.status)) {
+      return res.status(400).json({ error: 'CANNOT_DELETE', message: 'Only draft or cancelled orders can be deleted.' });
     }
-    const [updated] = await db.update(sales_orders)
-      .set({ status: 'cancelled', updated_at: new Date() })
-      .where(eq(sales_orders.id, req.params.id))
-      .returning();
-    return res.json(updated);
+    // Delete line items first (FK constraint), then the order
+    await db.delete(order_items).where(eq(order_items.order_id, order.id));
+    await db.delete(sales_orders).where(eq(sales_orders.id, order.id));
+    return res.status(204).send();
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
@@ -627,6 +665,7 @@ router.post('/:id/notes', requireLogin, async (req, res) => {
 
     const note = (req.body.note || '').trim();
     if (!note) return res.status(400).json({ error: 'NOTE_REQUIRED' });
+    if (note.length > 2000) return res.status(400).json({ error: 'NOTE_TOO_LONG', message: 'Notes cannot exceed 2000 characters.' });
 
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 16);
     const entry = `[Staff ${timestamp}]: ${note}`;

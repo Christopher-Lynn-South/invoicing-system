@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../lib/api';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import { QRCodeSVG } from 'qrcode.react';
@@ -45,7 +45,7 @@ function CardPayForm({ invoiceId, onSuccess }) {
     if (!stripe || !elements) return;
     setLoading(true); setError('');
     try {
-      const { data } = await axios.post(`/api/pay/${invoiceId}/intent`, { method: 'stripe_cc' });
+      const { data } = await api.post(`/api/pay/${invoiceId}/intent`, { method: 'stripe_cc' });
       const result = await stripe.confirmCardPayment(data.client_secret, {
         payment_method: { card: elements.getElement(CardElement) },
       });
@@ -94,7 +94,7 @@ function ACHPayForm({ invoiceId, patient, onSuccess }) {
     if (!stripe) return;
     setLoading(true); setError('');
     try {
-      const { data } = await axios.post(`/api/pay/${invoiceId}/intent`, { method: 'ach' });
+      const { data } = await api.post(`/api/pay/${invoiceId}/intent`, { method: 'ach' });
 
       // Step 1: open Stripe Financial Connections to collect bank account
       const collectResult = await stripe.collectBankAccountForPayment({
@@ -162,7 +162,7 @@ function USDCPayForm({ invoiceId, totalUSDC, onSuccess }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    axios.post(`/api/pay/${invoiceId}/intent`, { method: 'usdc' })
+    api.post(`/api/pay/${invoiceId}/intent`, { method: 'usdc' })
       .then(r => setWalletInfo(r.data))
       .catch(console.error);
   }, [invoiceId]);
@@ -171,7 +171,7 @@ function USDCPayForm({ invoiceId, totalUSDC, onSuccess }) {
     if (!txHash.trim()) return;
     setLoading(true); setError('');
     try {
-      await axios.post(`/api/pay/${invoiceId}/usdc-confirm`, { tx_hash: txHash.trim() });
+      await api.post(`/api/pay/${invoiceId}/usdc-confirm`, { tx_hash: txHash.trim() });
       onSuccess();
     } catch (err) {
       setError(err.response?.data?.message || 'Verification failed');

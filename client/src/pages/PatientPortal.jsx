@@ -128,10 +128,11 @@ export default function PatientPortal() {
   const [shipAddrsLoading, setShipAddrsLoading] = useState(false);
   const [shipEditId, setShipEditId]     = useState(null);    // null | 'new' | uuid
   const [shipForm, setShipForm]         = useState({ ...EMPTY_ADDR });
-  const [shipSaving, setShipSaving]     = useState(false);
-  const [shipMsg, setShipMsg]           = useState('');
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
-  const [addrError, setAddrError]       = useState('');
+  const [shipSaving, setShipSaving]               = useState(false);
+  const [shipDefaultSaving, setShipDefaultSaving] = useState(false);
+  const [shipMsg, setShipMsg]                     = useState('');
+  const [deleteConfirmId, setDeleteConfirmId]     = useState(null);
+  const [addrError, setAddrError]                 = useState('');
 
   // Change password
   const [cpCurrent, setCpCurrent] = useState('');
@@ -242,11 +243,14 @@ export default function PatientPortal() {
   }
 
   async function setDefaultShip(addrId) {
+    setShipDefaultSaving(true);
     try {
       await api.post(`/customer/addresses/shipping/${addrId}/set-default`);
       setShipAddrs(prev => prev.map(a => ({ ...a, is_default: a.id === addrId })));
     } catch {
       setAddrError('Failed to set default. Please try again.');
+    } finally {
+      setShipDefaultSaving(false);
     }
   }
 
@@ -771,9 +775,10 @@ export default function PatientPortal() {
                                 {!addr.is_default && (
                                   <button
                                     onClick={() => setDefaultShip(addr.id)}
-                                    style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                    disabled={shipDefaultSaving}
+                                    style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 10px', cursor: shipDefaultSaving ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: shipDefaultSaving ? 0.6 : 1 }}
                                   >
-                                    Set Default
+                                    {shipDefaultSaving ? 'Saving…' : 'Set Default'}
                                   </button>
                                 )}
                                 <button

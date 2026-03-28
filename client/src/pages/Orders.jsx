@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import useOrderStore from '../store/useOrderStore';
 import api from '../lib/api';
-import { fmtDate, statusBadge } from '../lib/utils';
+import { fmtDate } from '../lib/utils';
 import Modal from '../components/Modal';
 
 const TABS = [
@@ -95,9 +95,12 @@ export default function Orders() {
   const fetchPatients = useOrderStore(s => s.fetchPatients);
   const fetchProducts = useOrderStore(s => s.fetchProducts);
   const orders = useOrderStore(s => s.orders);
+  const addToast = useOrderStore(s => s.addToast);
   const loading = useOrderStore(s => s.ordersLoading);
   const [activeTab, setActiveTab] = useState('');
   const [showNew, setShowNew] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchPatients();
@@ -106,6 +109,20 @@ export default function Orders() {
   }, [activeTab]);
 
   const filtered = activeTab ? orders.filter(o => o.status === activeTab) : orders;
+
+  async function handleDelete(id) {
+    setDeleting(true);
+    try {
+      await api.delete(`/orders/${id}`);
+      addToast('Order deleted', 'success');
+      setDeleteId(null);
+      fetchOrders(activeTab ? { status: activeTab } : {});
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to delete order', 'error');
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <div>
@@ -140,13 +157,14 @@ export default function Orders() {
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Patient</th>
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Status</th>
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Date</th>
+              <th style={{ padding: '12px 16px', textAlign: 'right' }}></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>Loading…</td></tr>
+              <tr><td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No orders found</td></tr>
+              <tr><td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No orders found</td></tr>
             ) : filtered.map(order => (
               <tr key={order.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '12px 16px' }}>
@@ -159,13 +177,44 @@ export default function Orders() {
                   <span className={`badge badge-${order.status.replace(/_/g, '-')}`}>{order.status.replace(/_/g, ' ')}</span>
                 </td>
                 <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 13 }}>{fmtDate(order.created_at)}</td>
+                <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  {(order.status === 'draft' || order.status === 'cancelled') && (
+                    deleteId === order.id ? (
+                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Delete?</span>
+                        <button
+                          onClick={() => handleDelete(order.id)}
+                          disabled={deleting}
+                          style={{ fontSize: 12, background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 4, padding: '3px 10px', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.6 : 1 }}
+                        >
+                          Yes
+                        </button>
+                        <button
+                          onClick={() => setDeleteId(null)}
+                          disabled={deleting}
+                          style={{ fontSize: 12, background: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '3px 8px', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => setDeleteId(order.id)}
+                        title="Delete order"
+                        style={{ fontSize: 13, background: 'none', border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: 4, padding: '3px 10px', cursor: 'pointer' }}
+                      >
+                        Delete
+                      </button>
+                    )
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <NewOrderModal open={showNew} onClose={() => setShowNew(false)} onCreated={() => fetchOrders()} />
+      <NewOrderModal open={showNew} onClose={() => setShowNew(false)} onCreated={() => fetchOrders(activeTab ? { status: activeTab } : {})} />
     </div>
   );
 }

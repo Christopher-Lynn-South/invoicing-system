@@ -2,11 +2,40 @@
 // logged-in patient's own data.
 const express = require('express');
 const fs = require('fs');
+const { z } = require('zod');
 const { db } = require('../db');
 const { patients, sales_orders, order_items, invoices, shipments, products, prescriptions, reminder_rules, refill_requests, patient_shipping_addresses } = require('../db/schema');
 const { eq, desc, and } = require('drizzle-orm');
 const { requirePatientLogin } = require('../middleware/auth');
 const { sendPatientRefillRequestToAdmin } = require('../services/mailer');
+
+// ─── Address validation schemas ───────────────────────────────────────────────
+const billingAddrSchema = z.object({
+  street:  z.string().max(200).optional(),
+  street2: z.string().max(200).optional(),
+  city:    z.string().max(100).optional(),
+  state:   z.string().max(100).optional(),
+  zip:     z.string().max(20).optional(),
+  country: z.string().max(100).optional(),
+}).strict();
+
+const shippingAddrSchema = z.object({
+  label:   z.string().min(1).max(50).default('Home'),
+  street:  z.string().min(1).max(200),
+  street2: z.string().max(200).optional(),
+  city:    z.string().min(1).max(100),
+  state:   z.string().min(1).max(2),
+  zip:     z.string().min(1).max(20),
+}).strict();
+
+const shippingAddrUpdateSchema = z.object({
+  label:   z.string().min(1).max(50).optional(),
+  street:  z.string().min(1).max(200).optional(),
+  street2: z.string().max(200).optional(),
+  city:    z.string().min(1).max(100).optional(),
+  state:   z.string().min(1).max(2).optional(),
+  zip:     z.string().min(1).max(20).optional(),
+}).strict();
 
 const router = express.Router();
 
@@ -369,7 +398,11 @@ function rowToShippingJson(row) {
 // ─── PATCH /api/customer/addresses/billing ────────────────────────────────────
 router.patch('/addresses/billing', async (req, res) => {
   try {
-    const { street, street2, city, state, zip, country } = req.body;
+    const parsed = billingAddrSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0].message });
+    }
+    const { street, street2, city, state, zip, country } = parsed.data;
     const addr = {
       street:  (street  || '').trim() || undefined,
       street2: (street2 || '').trim() || undefined,
@@ -409,10 +442,11 @@ router.get('/addresses/shipping', async (req, res) => {
 // ─── POST /api/customer/addresses/shipping ────────────────────────────────────
 router.post('/addresses/shipping', async (req, res) => {
   try {
-    const { label, street, street2, city, state, zip } = req.body;
-    if (!street || !city || !state || !zip) {
-      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'street, city, state, and zip are required.' });
+    const parsed = shippingAddrSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0].message });
     }
+    const { label, street, street2, city, state, zip } = parsed.data;
 
     // Check if this patient already has any shipping addresses
     const existing = await db.select({ id: patient_shipping_addresses.id })
@@ -423,7 +457,7 @@ router.post('/addresses/shipping', async (req, res) => {
 
     const [row] = await db.insert(patient_shipping_addresses).values({
       patient_id: req.session.customerId,
-      label:      (label   || 'Home').trim(),
+      label:      label.trim(),
       street:     street.trim(),
       street2:    street2 ? street2.trim() : null,
       city:       city.trim(),
@@ -450,19 +484,25 @@ router.post('/addresses/shipping', async (req, res) => {
 // ─── PATCH /api/customer/addresses/shipping/:addrId ──────────────────────────
 router.patch('/addresses/shipping/:addrId', async (req, res) => {
   try {
+    const parsed = shippingAddrUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0].message });
+    }
+
     const [addr] = await db.select().from(patient_shipping_addresses)
       .where(eq(patient_shipping_addresses.id, req.params.addrId)).limit(1);
     if (!addr || addr.patient_id !== req.session.customerId) {
       return res.status(404).json({ error: 'NOT_FOUND' });
     }
 
+    const body = parsed.data;
     const updates = {};
-    if (req.body.label   !== undefined) updates.label   = req.body.label.trim()   || addr.label;
-    if (req.body.street  !== undefined) updates.street  = req.body.street.trim()  || addr.street;
-    if (req.body.street2 !== undefined) updates.street2 = req.body.street2.trim() || null;
-    if (req.body.city    !== undefined) updates.city    = req.body.city.trim()    || addr.city;
-    if (req.body.state   !== undefined) updates.state   = (req.body.state.trim().toUpperCase()) || addr.state;
-    if (req.body.zip     !== undefined) updates.zip     = req.body.zip.trim()     || addr.zip;
+    if (body.label   !== undefined) updates.label   = body.label.trim()   || addr.label;
+    if (body.street  !== undefined) updates.street  = body.street.trim()  || addr.street;
+    if (body.street2 !== undefined) updates.street2 = body.street2.trim() || null;
+    if (body.city    !== undefined) updates.city    = body.city.trim()    || addr.city;
+    if (body.state   !== undefined) updates.state   = body.state.trim().toUpperCase() || addr.state;
+    if (body.zip     !== undefined) updates.zip     = body.zip.trim()     || addr.zip;
 
     const [updated] = await db.update(patient_shipping_addresses)
       .set(updates)

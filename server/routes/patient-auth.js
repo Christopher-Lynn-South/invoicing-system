@@ -168,34 +168,32 @@ router.post('/reset-password', async (req, res) => {
 });
 
 // ─── POST /api/patient/grant-access/:patientId  (admin grants portal access) ──
-// Generates a temporary password, enables the portal, and emails the patient.
+// Generates a secure setup link (valid 72 h) and emails it to the patient.
+// The patient sets their own password on first login — no plaintext credentials sent.
 router.post('/grant-access/:patientId', requireLogin, async (req, res) => {
   try {
     const [patient] = await db.select().from(patients).where(eq(patients.id, req.params.patientId)).limit(1);
     if (!patient) return res.status(404).json({ error: 'NOT_FOUND' });
     if (!patient.email) return res.status(422).json({ error: 'NO_EMAIL', message: 'Patient has no email address on file.' });
 
-    // Generate a secure temporary password
-    const tempPassword = crypto.randomBytes(6).toString('hex'); // 12-char hex
-    const hash = await bcrypt.hash(tempPassword, 12);
+    // Generate a secure one-time setup token (72-hour window)
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
 
     await db.update(patients)
-      .set({ password_hash: hash, portal_enabled: true })
+      .set({ portal_enabled: true, reset_token: token, reset_token_expires_at: expiresAt })
       .where(eq(patients.id, patient.id));
 
-    // Send welcome email with credentials
-    const portalUrl = `${process.env.BASE_URL}/customer/login`;
+    // Send welcome email with setup link (no credentials in email)
+    const setupUrl = `${process.env.BASE_URL}/customer/set-password?token=${token}`;
     await sendMail({
       to: patient.email,
-      subject: 'Your OrderFlow Customer Portal Access',
+      subject: 'Set Up Your Customer Portal Access',
       html: `
         <p>Hello ${patient.name},</p>
-        <p>Your customer portal access has been set up. You can log in to view your orders, invoices, and make payments.</p>
-        <p><strong>Portal:</strong> <a href="${portalUrl}">${portalUrl}</a><br>
-        <strong>Email:</strong> ${patient.email}<br>
-        <strong>Temporary password:</strong> <code>${tempPassword}</code></p>
-        <p>Please log in and change your password immediately.</p>
-        <p>— Corp 001 Inc.</p>
+        <p>Your customer portal has been enabled. Click the button below to set your password and access your orders, invoices, and payments.</p>
+        <p><a href="${setupUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;">Set Up My Account</a></p>
+        <p>This link expires in 72 hours. If you didn't request this, you can ignore this email.</p>
       `,
     });
 

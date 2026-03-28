@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
+import api from '../lib/api';
 import CustomerPayPortal from '../components/CustomerPayPortal';
 import { fmtDate } from '../lib/utils';
 
@@ -16,7 +16,7 @@ export default function PayPage() {
       ? `/api/invoices/by-token/${token}`
       : `/api/invoices/${invoiceId}`;
 
-    axios.get(url)
+    api.get(url)
       .then(res => { setInvoice(res.data); setLoading(false); })
       .catch(err => {
         if (err.response?.status === 410) {

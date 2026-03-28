@@ -74,6 +74,8 @@ function PipelineStep({ label, active, done }) {
 export default function OrderDetail() {
   const { id } = useParams();
   const addToast = useOrderStore(s => s.addToast);
+  const patients = useOrderStore(s => s.patients);
+  const fetchPatients = useOrderStore(s => s.fetchPatients);
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [shipModal, setShipModal] = useState(false);
@@ -102,6 +104,9 @@ export default function OrderDetail() {
   const [emailChannel, setEmailChannel] = useState('email');
   const [emailTemplates, setEmailTemplates] = useState([]);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [showEditOrder, setShowEditOrder] = useState(false);
+  const [editOrderForm, setEditOrderForm] = useState({ patient_id: '', notes: '' });
+  const [savingEditOrder, setSavingEditOrder] = useState(false);
 
   async function load() {
     try {
@@ -118,7 +123,27 @@ export default function OrderDetail() {
     } catch { /* non-fatal */ }
   }
 
-  useEffect(() => { load(); loadEmailTemplates(); }, [id]);
+  useEffect(() => { load(); loadEmailTemplates(); fetchPatients(); }, [id]);
+
+  async function saveEditOrder(e) {
+    e.preventDefault();
+    setSavingEditOrder(true);
+    try {
+      const body = {};
+      if (editOrderForm.patient_id) body.patient_id = editOrderForm.patient_id;
+      if (editOrderForm.notes !== order.notes) body.notes = editOrderForm.notes;
+      if (!Object.keys(body).length) { setShowEditOrder(false); return; }
+      const { data } = await api.patch(`/orders/${id}`, body);
+      setOrder(prev => ({ ...prev, ...data }));
+      addToast('Order updated', 'success');
+      setShowEditOrder(false);
+      load(); // reload full detail (refresh patient name etc.)
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to update order', 'error');
+    } finally {
+      setSavingEditOrder(false);
+    }
+  }
 
   async function generateInvoice() {
     setGeneratingInvoice(true);
@@ -366,9 +391,19 @@ export default function OrderDetail() {
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <Link to="/orders" style={{ fontSize: 13, color: 'var(--text-muted)' }}>← Orders</Link>
-        <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 28, marginTop: 8 }}>
-          {order.order_number}
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 8 }}>
+          <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 28, flex: 1 }}>
+            {order.order_number}
+          </h1>
+          {order.status === 'draft' && (
+            <button
+              onClick={() => { setEditOrderForm({ patient_id: order.patient?.id || '', notes: order.notes || '' }); setShowEditOrder(true); }}
+              style={{ fontSize: 13, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '6px 14px', cursor: 'pointer', flexShrink: 0 }}
+            >
+              Edit Order
+            </button>
+          )}
+        </div>
         <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>{order.patient?.name} · {fmtDate(order.created_at)}</p>
       </div>
 
@@ -1065,6 +1100,40 @@ export default function OrderDetail() {
             <button type="button" onClick={() => setShipModal(false)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
             <button type="submit" disabled={shipping} style={{ background: 'var(--success)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600 }}>
               {shipping ? 'Creating…' : 'Create Label'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Order Modal */}
+      <Modal open={showEditOrder} onClose={() => setShowEditOrder(false)} title="Edit Order">
+        <form onSubmit={saveEditOrder}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Patient</label>
+            <select
+              value={editOrderForm.patient_id}
+              onChange={e => setEditOrderForm(f => ({ ...f, patient_id: e.target.value }))}
+              style={{ width: '100%' }}
+            >
+              <option value="">Keep current ({order?.patient?.name})</option>
+              {patients.map(p => (
+                <option key={p.id} value={p.id}>{p.name} — {p.email}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Notes</label>
+            <textarea
+              value={editOrderForm.notes}
+              onChange={e => setEditOrderForm(f => ({ ...f, notes: e.target.value }))}
+              rows={4}
+              style={{ width: '100%', resize: 'vertical' }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => setShowEditOrder(false)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
+            <button type="submit" disabled={savingEditOrder} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600 }}>
+              {savingEditOrder ? 'Saving…' : 'Save'}
             </button>
           </div>
         </form>
