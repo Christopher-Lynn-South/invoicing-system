@@ -44,8 +44,56 @@ const TABS = [
   { key: 'shipments',     label: 'Shipments' },
   { key: 'prescriptions', label: 'Prescriptions' },
   { key: 'refills',       label: 'Refills' },
+  { key: 'addresses',     label: 'Addresses' },
   { key: 'account',       label: 'Account' },
 ];
+
+// ── Reusable address form fields ──────────────────────────────────────────────
+const EMPTY_ADDR = { label: '', street: '', street2: '', city: '', state: '', zip: '' };
+
+function AddrFields({ form, setForm, showLabel = false }) {
+  return (
+    <>
+      {showLabel && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Label (e.g. Home, Office)</label>
+          <input value={form.label || ''} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+            placeholder="Home" style={{ width: '100%' }} />
+        </div>
+      )}
+      <div style={{ marginBottom: 12 }}>
+        <label style={labelStyle}>Street Address</label>
+        <input value={form.street || ''} onChange={e => setForm(f => ({ ...f, street: e.target.value }))}
+          placeholder="123 Main St" style={{ width: '100%' }} required />
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <label style={labelStyle}>Apt / Suite / Unit (optional)</label>
+        <input value={form.street2 || ''} onChange={e => setForm(f => ({ ...f, street2: e.target.value }))}
+          placeholder="Apt 4B" style={{ width: '100%' }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px', gap: 10, marginBottom: 12 }}>
+        <div>
+          <label style={labelStyle}>City</label>
+          <input value={form.city || ''} onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+            placeholder="Austin" style={{ width: '100%' }} required />
+        </div>
+        <div>
+          <label style={labelStyle}>State</label>
+          <input value={form.state || ''} onChange={e => setForm(f => ({ ...f, state: e.target.value.toUpperCase() }))}
+            placeholder="TX" maxLength={2} style={{ width: '100%' }} required />
+        </div>
+        <div>
+          <label style={labelStyle}>ZIP</label>
+          <input value={form.zip || ''} onChange={e => setForm(f => ({ ...f, zip: e.target.value }))}
+            placeholder="78701" style={{ width: '100%' }} required />
+        </div>
+      </div>
+    </>
+  );
+}
+
+const labelStyle = { display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 };
+const cardStyle  = { background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 18px' };
 
 export default function PatientPortal() {
   const navigate = useNavigate();
@@ -68,6 +116,22 @@ export default function PatientPortal() {
   const [requestState, setRequestState] = useState({});
   // Per-rule pause state: optimistic active value
   const [pauseLoading, setPauseLoading] = useState({});
+
+  // Addresses tab
+  const [billing, setBilling]           = useState(null);    // current saved billing addr
+  const [billingForm, setBillingForm]   = useState({});
+  const [billingEditing, setBillingEditing] = useState(false);
+  const [billingSaving, setBillingSaving]   = useState(false);
+  const [billingMsg, setBillingMsg]     = useState('');
+
+  const [shipAddrs, setShipAddrs]       = useState(null);    // null = not yet loaded
+  const [shipAddrsLoading, setShipAddrsLoading] = useState(false);
+  const [shipEditId, setShipEditId]     = useState(null);    // null | 'new' | uuid
+  const [shipForm, setShipForm]         = useState({ ...EMPTY_ADDR });
+  const [shipSaving, setShipSaving]     = useState(false);
+  const [shipMsg, setShipMsg]           = useState('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [addrError, setAddrError]       = useState('');
 
   // Change password
   const [cpCurrent, setCpCurrent] = useState('');
@@ -99,6 +163,23 @@ export default function PatientPortal() {
     }
   }, [tab, rxList, rxLoading]);
 
+  // Lazy-load addresses when tab first opened
+  useEffect(() => {
+    if (tab === 'addresses' && shipAddrs === null && !shipAddrsLoading) {
+      setShipAddrsLoading(true);
+      Promise.all([
+        api.get('/customer/profile'),
+        api.get('/customer/addresses/shipping'),
+      ]).then(([prof, ship]) => {
+        setBilling(prof.data.billing_address || {});
+        setBillingForm(prof.data.billing_address || {});
+        setShipAddrs(ship.data);
+      }).catch(() => {
+        setShipAddrs([]);
+      }).finally(() => setShipAddrsLoading(false));
+    }
+  }, [tab, shipAddrs, shipAddrsLoading]);
+
   // Lazy-load refills when tab first opened
   useEffect(() => {
     if (tab === 'refills' && refills === null && !refillsLoading) {
@@ -109,6 +190,84 @@ export default function PatientPortal() {
         .finally(() => setRefillsLoading(false));
     }
   }, [tab, refills, refillsLoading]);
+
+  // ── Billing address ──────────────────────────────────────────────────────────
+  async function saveBilling(e) {
+    e.preventDefault();
+    setBillingSaving(true); setBillingMsg('');
+    try {
+      const { data } = await api.patch('/customer/addresses/billing', billingForm);
+      setBilling(data.billing_address);
+      setBillingEditing(false);
+      setBillingMsg('Billing address saved.');
+    } catch {
+      setBillingMsg('Failed to save. Please try again.');
+    } finally {
+      setBillingSaving(false);
+    }
+  }
+
+  // ── Shipping addresses ────────────────────────────────────────────────────────
+  function startAddShip() {
+    setShipForm({ ...EMPTY_ADDR, label: 'Home' });
+    setShipEditId('new');
+    setShipMsg(''); setAddrError('');
+  }
+
+  function startEditShip(addr) {
+    setShipForm({ label: addr.label, street: addr.street, street2: addr.street2 || '',
+      city: addr.city, state: addr.state, zip: addr.zip });
+    setShipEditId(addr.id);
+    setShipMsg(''); setAddrError('');
+  }
+
+  async function saveShip(e) {
+    e.preventDefault();
+    setShipSaving(true); setAddrError('');
+    try {
+      if (shipEditId === 'new') {
+        const { data } = await api.post('/customer/addresses/shipping', shipForm);
+        setShipAddrs(prev => [...(prev || []), data]);
+      } else {
+        const { data } = await api.patch(`/customer/addresses/shipping/${shipEditId}`, shipForm);
+        setShipAddrs(prev => prev.map(a => a.id === shipEditId ? data : a));
+      }
+      setShipEditId(null);
+      setShipMsg(shipEditId === 'new' ? 'Address added.' : 'Address updated.');
+    } catch (err) {
+      setAddrError(err.response?.data?.message || 'Failed to save address.');
+    } finally {
+      setShipSaving(false);
+    }
+  }
+
+  async function setDefaultShip(addrId) {
+    try {
+      await api.post(`/customer/addresses/shipping/${addrId}/set-default`);
+      setShipAddrs(prev => prev.map(a => ({ ...a, is_default: a.id === addrId })));
+    } catch {
+      setAddrError('Failed to set default. Please try again.');
+    }
+  }
+
+  async function deleteShip(addrId) {
+    try {
+      await api.delete(`/customer/addresses/shipping/${addrId}`);
+      setShipAddrs(prev => {
+        const remaining = prev.filter(a => a.id !== addrId);
+        // If the deleted one was default, promote first remaining
+        const wasDefault = prev.find(a => a.id === addrId)?.is_default;
+        if (wasDefault && remaining.length > 0) {
+          remaining[0] = { ...remaining[0], is_default: true };
+        }
+        return remaining;
+      });
+      setDeleteConfirmId(null);
+    } catch (err) {
+      setAddrError(err.response?.data?.message || 'Failed to delete address.');
+      setDeleteConfirmId(null);
+    }
+  }
 
   async function handleLogout() {
     await api.post('/customer/logout');
@@ -439,6 +598,199 @@ export default function PatientPortal() {
                   );
                 })}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Addresses ── */}
+        {tab === 'addresses' && (
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 24 }}>Addresses</h2>
+
+            {shipAddrsLoading ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
+            ) : (
+              <>
+                {/* ── Billing Address ── */}
+                <div style={{ marginBottom: 32 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 600 }}>Billing Address</h3>
+                    {!billingEditing && (
+                      <button
+                        onClick={() => { setBillingForm(billing || {}); setBillingEditing(true); setBillingMsg(''); }}
+                        style={{ fontSize: 13, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+
+                  {billingEditing ? (
+                    <div style={cardStyle}>
+                      <form onSubmit={saveBilling}>
+                        <AddrFields form={billingForm} setForm={setBillingForm} />
+                        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                          <button type="submit" disabled={billingSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: billingSaving ? 'not-allowed' : 'pointer', opacity: billingSaving ? 0.6 : 1 }}>
+                            {billingSaving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button type="button" onClick={() => { setBillingEditing(false); setBillingMsg(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 18px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  ) : (
+                    <div style={cardStyle}>
+                      {billing && billing.street ? (
+                        <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+                          <div>{billing.street}</div>
+                          {billing.street2 && <div>{billing.street2}</div>}
+                          <div>{billing.city}, {billing.state} {billing.zip}</div>
+                        </div>
+                      ) : (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No billing address on file.</div>
+                      )}
+                    </div>
+                  )}
+                  {billingMsg && (
+                    <div style={{ marginTop: 8, fontSize: 13, color: billingMsg.startsWith('Failed') ? 'var(--danger)' : 'var(--success)' }}>
+                      {billingMsg}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Shipping Addresses ── */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 600 }}>Shipping Addresses</h3>
+                    {shipEditId === null && (
+                      <button
+                        onClick={startAddShip}
+                        style={{ fontSize: 13, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}
+                      >
+                        + Add Address
+                      </button>
+                    )}
+                  </div>
+
+                  {addrError && (
+                    <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--danger)' }}>{addrError}</div>
+                  )}
+                  {shipMsg && (
+                    <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--success)' }}>{shipMsg}</div>
+                  )}
+
+                  {/* Add new address form */}
+                  {shipEditId === 'new' && (
+                    <div style={{ ...cardStyle, marginBottom: 14, borderColor: 'var(--accent)' }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14 }}>New Shipping Address</div>
+                      <form onSubmit={saveShip}>
+                        <AddrFields form={shipForm} setForm={setShipForm} showLabel />
+                        <div style={{ marginBottom: 12 }}>
+                          <label style={labelStyle}>Country</label>
+                          <div style={{ fontSize: 14, color: 'var(--text-secondary)', padding: '8px 10px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                            United States (US)
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <button type="submit" disabled={shipSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: shipSaving ? 'not-allowed' : 'pointer', opacity: shipSaving ? 0.6 : 1 }}>
+                            {shipSaving ? 'Saving…' : 'Add Address'}
+                          </button>
+                          <button type="button" onClick={() => { setShipEditId(null); setAddrError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 18px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* Existing addresses */}
+                  {!shipAddrs || shipAddrs.length === 0 ? (
+                    shipEditId !== 'new' && <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No shipping addresses saved yet.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {shipAddrs.map(addr => (
+                        <div key={addr.id} style={{ ...cardStyle, borderColor: addr.is_default ? 'var(--accent)' : 'var(--border)' }}>
+                          {shipEditId === addr.id ? (
+                            /* Edit inline form */
+                            <form onSubmit={saveShip}>
+                              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14 }}>Edit Address</div>
+                              <AddrFields form={shipForm} setForm={setShipForm} showLabel />
+                              <div style={{ marginBottom: 12 }}>
+                                <label style={labelStyle}>Country</label>
+                                <div style={{ fontSize: 14, color: 'var(--text-secondary)', padding: '8px 10px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                                  United States (US)
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 10 }}>
+                                <button type="submit" disabled={shipSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: shipSaving ? 'not-allowed' : 'pointer', opacity: shipSaving ? 0.6 : 1 }}>
+                                  {shipSaving ? 'Saving…' : 'Save'}
+                                </button>
+                                <button type="button" onClick={() => { setShipEditId(null); setAddrError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 18px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : deleteConfirmId === addr.id ? (
+                            /* Delete confirmation */
+                            <div>
+                              <div style={{ fontSize: 14, marginBottom: 12 }}>
+                                Delete <strong>{addr.label}</strong>? This cannot be undone.
+                              </div>
+                              <div style={{ display: 'flex', gap: 10 }}>
+                                <button onClick={() => deleteShip(addr.id)} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+                                  Yes, delete
+                                </button>
+                                <button onClick={() => setDeleteConfirmId(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 16px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Address display */
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                  <span style={{ fontWeight: 600, fontSize: 14 }}>{addr.label}</span>
+                                  {addr.is_default && <Badge label="Default" color="var(--accent)" />}
+                                </div>
+                                <div style={{ fontSize: 14, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+                                  <div>{addr.street}</div>
+                                  {addr.street2 && <div>{addr.street2}</div>}
+                                  <div>{addr.city}, {addr.state} {addr.zip}</div>
+                                  <div>United States</div>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end', flexShrink: 0 }}>
+                                <button
+                                  onClick={() => startEditShip(addr)}
+                                  style={{ fontSize: 12, color: 'var(--text-secondary)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}
+                                >
+                                  Edit
+                                </button>
+                                {!addr.is_default && (
+                                  <button
+                                    onClick={() => setDefaultShip(addr.id)}
+                                    style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                  >
+                                    Set Default
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => { setDeleteConfirmId(addr.id); setAddrError(''); }}
+                                  style={{ fontSize: 12, color: 'var(--danger)', background: 'none', border: '1px solid var(--danger)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}

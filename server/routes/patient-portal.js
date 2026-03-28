@@ -3,7 +3,7 @@
 const express = require('express');
 const fs = require('fs');
 const { db } = require('../db');
-const { patients, sales_orders, order_items, invoices, shipments, products, prescriptions, reminder_rules, refill_requests } = require('../db/schema');
+const { patients, sales_orders, order_items, invoices, shipments, products, prescriptions, reminder_rules, refill_requests, patient_shipping_addresses } = require('../db/schema');
 const { eq, desc, and } = require('drizzle-orm');
 const { requirePatientLogin } = require('../middleware/auth');
 const { sendPatientRefillRequestToAdmin } = require('../services/mailer');
@@ -23,6 +23,7 @@ router.get('/profile', async (req, res) => {
         email: patients.email,
         phone: patients.phone,
         billing_address: patients.billing_address,
+        shipping_address: patients.shipping_address,
         date_of_birth: patients.date_of_birth,
       })
       .from(patients)
@@ -333,6 +334,227 @@ router.post('/refills/:ruleId/request', async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     console.error('Customer refill request error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── Address helpers ──────────────────────────────────────────────────────────
+
+// Normalize country full-name → ISO-2 code (mirrors patients.js logic)
+const COUNTRY_MAP = {
+  'united states': 'US', 'united states of america': 'US',
+  'usa': 'US', 'u.s.a.': 'US', 'u.s.': 'US',
+  'mexico': 'MX', 'méxico': 'MX', 'mex': 'MX',
+  'canada': 'CA', 'united kingdom': 'GB', 'uk': 'GB',
+  'spain': 'ES', 'españa': 'ES', 'germany': 'DE', 'france': 'FR',
+};
+function normalizeCountry(c) {
+  if (!c) return c;
+  return COUNTRY_MAP[c.trim().toLowerCase()] || c.trim().toUpperCase();
+}
+
+// Build the patients.shipping_address JSONB from a saved address row
+function rowToShippingJson(row) {
+  const obj = {
+    street: row.street,
+    city: row.city,
+    state: row.state,
+    zip: row.zip,
+    country: row.country,
+  };
+  if (row.street2) obj.street2 = row.street2;
+  return obj;
+}
+
+// ─── PATCH /api/customer/addresses/billing ────────────────────────────────────
+router.patch('/addresses/billing', async (req, res) => {
+  try {
+    const { street, street2, city, state, zip, country } = req.body;
+    const addr = {
+      street:  (street  || '').trim() || undefined,
+      street2: (street2 || '').trim() || undefined,
+      city:    (city    || '').trim() || undefined,
+      state:   (state   || '').trim().toUpperCase() || undefined,
+      zip:     (zip     || '').trim() || undefined,
+      country: country ? normalizeCountry(country) : undefined,
+    };
+    // Remove undefined keys
+    Object.keys(addr).forEach(k => addr[k] === undefined && delete addr[k]);
+
+    const [updated] = await db.update(patients)
+      .set({ billing_address: addr, updated_at: new Date() })
+      .where(eq(patients.id, req.session.customerId))
+      .returning({ billing_address: patients.billing_address });
+    return res.json({ ok: true, billing_address: updated.billing_address });
+  } catch (err) {
+    console.error('Customer billing address update error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── GET /api/customer/addresses/shipping ─────────────────────────────────────
+router.get('/addresses/shipping', async (req, res) => {
+  try {
+    const rows = await db.select()
+      .from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.patient_id, req.session.customerId))
+      .orderBy(desc(patient_shipping_addresses.is_default), patient_shipping_addresses.created_at);
+    return res.json(rows);
+  } catch (err) {
+    console.error('Customer shipping addresses list error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── POST /api/customer/addresses/shipping ────────────────────────────────────
+router.post('/addresses/shipping', async (req, res) => {
+  try {
+    const { label, street, street2, city, state, zip } = req.body;
+    if (!street || !city || !state || !zip) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'street, city, state, and zip are required.' });
+    }
+
+    // Check if this patient already has any shipping addresses
+    const existing = await db.select({ id: patient_shipping_addresses.id })
+      .from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.patient_id, req.session.customerId));
+
+    const isFirst = existing.length === 0;
+
+    const [row] = await db.insert(patient_shipping_addresses).values({
+      patient_id: req.session.customerId,
+      label:      (label   || 'Home').trim(),
+      street:     street.trim(),
+      street2:    street2 ? street2.trim() : null,
+      city:       city.trim(),
+      state:      state.trim().toUpperCase(),
+      zip:        zip.trim(),
+      country:    'US',
+      is_default: isFirst,
+    }).returning();
+
+    // If first address, sync to patients.shipping_address for FedEx
+    if (isFirst) {
+      await db.update(patients)
+        .set({ shipping_address: rowToShippingJson(row), updated_at: new Date() })
+        .where(eq(patients.id, req.session.customerId));
+    }
+
+    return res.status(201).json(row);
+  } catch (err) {
+    console.error('Customer add shipping address error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── PATCH /api/customer/addresses/shipping/:addrId ──────────────────────────
+router.patch('/addresses/shipping/:addrId', async (req, res) => {
+  try {
+    const [addr] = await db.select().from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.id, req.params.addrId)).limit(1);
+    if (!addr || addr.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    const updates = {};
+    if (req.body.label   !== undefined) updates.label   = req.body.label.trim()   || addr.label;
+    if (req.body.street  !== undefined) updates.street  = req.body.street.trim()  || addr.street;
+    if (req.body.street2 !== undefined) updates.street2 = req.body.street2.trim() || null;
+    if (req.body.city    !== undefined) updates.city    = req.body.city.trim()    || addr.city;
+    if (req.body.state   !== undefined) updates.state   = (req.body.state.trim().toUpperCase()) || addr.state;
+    if (req.body.zip     !== undefined) updates.zip     = req.body.zip.trim()     || addr.zip;
+
+    const [updated] = await db.update(patient_shipping_addresses)
+      .set(updates)
+      .where(eq(patient_shipping_addresses.id, addr.id))
+      .returning();
+
+    // If this is the default, sync the updated fields to patients.shipping_address
+    if (updated.is_default) {
+      await db.update(patients)
+        .set({ shipping_address: rowToShippingJson(updated), updated_at: new Date() })
+        .where(eq(patients.id, req.session.customerId));
+    }
+
+    return res.json(updated);
+  } catch (err) {
+    console.error('Customer edit shipping address error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── DELETE /api/customer/addresses/shipping/:addrId ─────────────────────────
+router.delete('/addresses/shipping/:addrId', async (req, res) => {
+  try {
+    const [addr] = await db.select().from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.id, req.params.addrId)).limit(1);
+    if (!addr || addr.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    // Count remaining addresses (excluding this one)
+    const others = await db.select({ id: patient_shipping_addresses.id })
+      .from(patient_shipping_addresses)
+      .where(and(
+        eq(patient_shipping_addresses.patient_id, req.session.customerId),
+        eq(patient_shipping_addresses.id, addr.id) // will negate below — use NOT
+      ));
+    // Re-query excluding this address
+    const all = await db.select().from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.patient_id, req.session.customerId));
+    const remaining = all.filter(a => a.id !== addr.id);
+
+    if (remaining.length === 0) {
+      return res.status(400).json({ error: 'LAST_ADDRESS', message: 'You must keep at least one shipping address.' });
+    }
+
+    await db.delete(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.id, addr.id));
+
+    // If deleted address was default, promote oldest remaining to default
+    if (addr.is_default) {
+      const oldest = remaining.sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+      await db.update(patient_shipping_addresses)
+        .set({ is_default: true })
+        .where(eq(patient_shipping_addresses.id, oldest.id));
+      // Sync to patients.shipping_address
+      await db.update(patients)
+        .set({ shipping_address: rowToShippingJson(oldest), updated_at: new Date() })
+        .where(eq(patients.id, req.session.customerId));
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Customer delete shipping address error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── POST /api/customer/addresses/shipping/:addrId/set-default ───────────────
+router.post('/addresses/shipping/:addrId/set-default', async (req, res) => {
+  try {
+    const [addr] = await db.select().from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.id, req.params.addrId)).limit(1);
+    if (!addr || addr.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
+    // Clear default on all this patient's addresses, then set on target
+    await db.update(patient_shipping_addresses)
+      .set({ is_default: false })
+      .where(eq(patient_shipping_addresses.patient_id, req.session.customerId));
+    await db.update(patient_shipping_addresses)
+      .set({ is_default: true })
+      .where(eq(patient_shipping_addresses.id, addr.id));
+
+    // Sync to patients.shipping_address for FedEx
+    await db.update(patients)
+      .set({ shipping_address: rowToShippingJson(addr), updated_at: new Date() })
+      .where(eq(patients.id, req.session.customerId));
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Customer set-default shipping address error:', err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });

@@ -217,6 +217,21 @@ const refill_requests = pgTable('refill_requests', {
   created_at:        timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
+// ─── patient_shipping_addresses ───────────────────────────────────────────────
+const patient_shipping_addresses = pgTable('patient_shipping_addresses', {
+  id:         uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  patient_id: uuid('patient_id').notNull().references(() => patients.id),
+  label:      text('label').notNull().default('Home'),
+  street:     text('street').notNull(),
+  street2:    text('street2'),
+  city:       text('city').notNull(),
+  state:      text('state').notNull(),
+  zip:        text('zip').notNull(),
+  country:    text('country').notNull().default('US'),
+  is_default: boolean('is_default').notNull().default(false),
+  created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
+});
+
 // ─── app_settings ─────────────────────────────────────────────────────────────
 const app_settings = pgTable('app_settings', {
   key: text('key').primaryKey(),
@@ -239,4 +254,5 @@ module.exports = {
   reminder_logs,
   prescriptions,
   patient_contacts,
+  patient_shipping_addresses,
 };
