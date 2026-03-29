@@ -1,7 +1,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { patients, sales_orders, prescriptions, patient_contacts, patient_shipping_addresses } = require('../db/schema');
-const { eq, desc } = require('drizzle-orm');
+const { eq, desc, and } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { validate, patientSchema, prescriptionSchema, contactSchema } = require('../middleware/validate');
 const { z } = require('zod');
@@ -317,6 +317,131 @@ const adminShippingAddrSchema = z.object({
   state:   z.string().min(1).max(2),
   zip:     z.string().min(1).max(20),
 }).strict();
+
+const adminShippingAddrUpdateSchema = z.object({
+  label:   z.string().min(1).max(50).optional(),
+  street:  z.string().min(1).max(200).optional(),
+  street2: z.string().max(200).optional().nullable(),
+  city:    z.string().min(1).max(100).optional(),
+  state:   z.string().min(1).max(2).optional(),
+  zip:     z.string().min(1).max(20).optional(),
+}).strict();
+
+// PATCH /api/patients/:id/shipping-addresses/:addrId
+router.patch('/:id/shipping-addresses/:addrId', requireLogin, async (req, res) => {
+  try {
+    const parsed = adminShippingAddrUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0].message });
+    }
+
+    const [addr] = await db.select().from(patient_shipping_addresses)
+      .where(and(
+        eq(patient_shipping_addresses.id, req.params.addrId),
+        eq(patient_shipping_addresses.patient_id, req.params.id),
+      )).limit(1);
+    if (!addr) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const body = parsed.data;
+    const updates = {};
+    if (body.label   !== undefined) updates.label   = body.label.trim();
+    if (body.street  !== undefined) updates.street  = body.street.trim();
+    if (body.street2 !== undefined) updates.street2 = body.street2?.trim() || null;
+    if (body.city    !== undefined) updates.city    = body.city.trim();
+    if (body.state   !== undefined) updates.state   = body.state.trim().toUpperCase();
+    if (body.zip     !== undefined) updates.zip     = body.zip.trim();
+
+    const [updated] = await db.update(patient_shipping_addresses)
+      .set(updates)
+      .where(eq(patient_shipping_addresses.id, addr.id))
+      .returning();
+
+    // If default, sync to patients.shipping_address
+    if (updated.is_default) {
+      await db.update(patients).set({
+        shipping_address: { street: updated.street, street2: updated.street2 || undefined, city: updated.city, state: updated.state, zip: updated.zip, country: updated.country },
+        updated_at: new Date(),
+      }).where(eq(patients.id, req.params.id));
+    }
+
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// DELETE /api/patients/:id/shipping-addresses/:addrId
+router.delete('/:id/shipping-addresses/:addrId', requireLogin, async (req, res) => {
+  try {
+    const [addr] = await db.select().from(patient_shipping_addresses)
+      .where(and(
+        eq(patient_shipping_addresses.id, req.params.addrId),
+        eq(patient_shipping_addresses.patient_id, req.params.id),
+      )).limit(1);
+    if (!addr) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const all = await db.select().from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.patient_id, req.params.id));
+    const remaining = all.filter(a => a.id !== addr.id);
+
+    await db.delete(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.id, addr.id));
+
+    // If deleted was default, promote oldest remaining to default
+    if (addr.is_default && remaining.length > 0) {
+      const oldest = remaining.sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+      await db.update(patient_shipping_addresses)
+        .set({ is_default: true })
+        .where(eq(patient_shipping_addresses.id, oldest.id));
+      await db.update(patients).set({
+        shipping_address: { street: oldest.street, street2: oldest.street2 || undefined, city: oldest.city, state: oldest.state, zip: oldest.zip, country: oldest.country },
+        updated_at: new Date(),
+      }).where(eq(patients.id, req.params.id));
+    } else if (remaining.length === 0) {
+      // No addresses left — clear the JSONB field
+      await db.update(patients).set({ shipping_address: null, updated_at: new Date() })
+        .where(eq(patients.id, req.params.id));
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// POST /api/patients/:id/shipping-addresses/:addrId/set-default
+router.post('/:id/shipping-addresses/:addrId/set-default', requireLogin, async (req, res) => {
+  try {
+    const [addr] = await db.select().from(patient_shipping_addresses)
+      .where(and(
+        eq(patient_shipping_addresses.id, req.params.addrId),
+        eq(patient_shipping_addresses.patient_id, req.params.id),
+      )).limit(1);
+    if (!addr) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    // Clear all defaults, set this one
+    await db.update(patient_shipping_addresses)
+      .set({ is_default: false })
+      .where(eq(patient_shipping_addresses.patient_id, req.params.id));
+    const [updated] = await db.update(patient_shipping_addresses)
+      .set({ is_default: true })
+      .where(eq(patient_shipping_addresses.id, addr.id))
+      .returning();
+
+    // Sync to patients.shipping_address
+    await db.update(patients).set({
+      shipping_address: { street: updated.street, street2: updated.street2 || undefined, city: updated.city, state: updated.state, zip: updated.zip, country: updated.country },
+      updated_at: new Date(),
+    }).where(eq(patients.id, req.params.id));
+
+    return res.json(updated);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
 
 // POST /api/patients/:id/shipping-addresses
 router.post('/:id/shipping-addresses', requireLogin, async (req, res) => {

@@ -8,6 +8,26 @@ import AddressAutocomplete from '../components/AddressAutocomplete';
 
 const EMPTY_ADDR = { street: '', street2: '', city: '', state: '', zip: '', country: 'US' };
 
+function ShipAddrFields({ form, setForm }) {
+  const f = (field, val) => setForm(p => ({ ...p, [field]: val }));
+  const inp = { width: '100%' };
+  const lbl = { display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 3 };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div><label style={lbl}>Label *</label><input placeholder="Home, Office…" value={form.label} onChange={e => f('label', e.target.value)} style={inp} /></div>
+        <div><label style={lbl}>Street *</label><input placeholder="123 Main St" value={form.street} onChange={e => f('street', e.target.value)} style={inp} /></div>
+      </div>
+      <div><label style={lbl}>Street 2</label><input placeholder="Apt, Suite…" value={form.street2} onChange={e => f('street2', e.target.value)} style={inp} /></div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 64px 100px', gap: 8 }}>
+        <div><label style={lbl}>City *</label><input placeholder="City" value={form.city} onChange={e => f('city', e.target.value)} style={inp} /></div>
+        <div><label style={lbl}>State *</label><input placeholder="TX" maxLength={2} value={form.state} onChange={e => f('state', e.target.value.toUpperCase())} style={inp} /></div>
+        <div><label style={lbl}>ZIP *</label><input placeholder="78701" value={form.zip} onChange={e => f('zip', e.target.value)} style={inp} /></div>
+      </div>
+    </div>
+  );
+}
+
 function AddrDisplay({ label, addr, onEdit }) {
   return (
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
@@ -52,11 +72,72 @@ export default function PatientDetail() {
   const [contactModal, setContactModal] = useState(false);
   const [contactForm, setContactForm] = useState({ relationship: 'guardian', first_name: '', last_name: '', phone: '', email: '', is_primary: false, receives_notifications: false });
 
-  // Address editing
+  // Address editing (single billing/shipping on patient record)
   const [addrModal, setAddrModal] = useState(null); // null | 'billing' | 'shipping'
   const [addrForm, setAddrForm] = useState(EMPTY_ADDR);
   const [sameAsBilling, setSameAsBilling] = useState(false);
   const [savingAddr, setSavingAddr] = useState(false);
+
+  // Ship-to address book
+  const [shipAddrs, setShipAddrs]           = useState([]);
+  const [shipAddrEditId, setShipAddrEditId] = useState(null); // null | 'new' | uuid
+  const [shipAddrForm, setShipAddrForm]     = useState({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
+  const [shipAddrSaving, setShipAddrSaving] = useState(false);
+  const [shipAddrDelId, setShipAddrDelId]   = useState(null); // uuid being confirmed for delete
+
+  async function loadShipAddrs(patientId) {
+    try {
+      const { data } = await api.get(`/patients/${patientId}/shipping-addresses`);
+      setShipAddrs(data);
+    } catch { /* non-fatal */ }
+  }
+
+  async function saveShipAddr(e) {
+    e.preventDefault();
+    setShipAddrSaving(true);
+    try {
+      if (shipAddrEditId === 'new') {
+        const { data } = await api.post(`/patients/${id}/shipping-addresses`, { ...shipAddrForm, country: 'US' });
+        setShipAddrs(prev => [...prev, data]);
+      } else {
+        const { data } = await api.patch(`/patients/${id}/shipping-addresses/${shipAddrEditId}`, shipAddrForm);
+        setShipAddrs(prev => prev.map(a => a.id === shipAddrEditId ? data : a));
+      }
+      setShipAddrEditId(null);
+      addToast('Address saved', 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to save address', 'error');
+    }
+    setShipAddrSaving(false);
+  }
+
+  async function deleteShipAddr(addrId) {
+    try {
+      await api.delete(`/patients/${id}/shipping-addresses/${addrId}`);
+      setShipAddrs(prev => {
+        const remaining = prev.filter(a => a.id !== addrId);
+        const wasDefault = prev.find(a => a.id === addrId)?.is_default;
+        if (wasDefault && remaining.length > 0) {
+          const oldest = [...remaining].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+          return remaining.map(a => ({ ...a, is_default: a.id === oldest.id }));
+        }
+        return remaining;
+      });
+      setShipAddrDelId(null);
+      addToast('Address deleted', 'success');
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to delete address', 'error');
+    }
+  }
+
+  async function setDefaultShipAddr(addrId) {
+    try {
+      const { data } = await api.post(`/patients/${id}/shipping-addresses/${addrId}/set-default`);
+      setShipAddrs(prev => prev.map(a => ({ ...a, is_default: a.id === addrId })));
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to set default', 'error');
+    }
+  }
 
   function openAddrModal(type) {
     const existing = type === 'billing' ? patient.billing_address : patient.shipping_address;
@@ -93,6 +174,7 @@ export default function PatientDetail() {
     setReminders(remRes.data);
     setPrescriptions(rxRes.data);
     setContacts(ctRes.data);
+    loadShipAddrs(id);
   }
 
   useEffect(() => { load(); fetchProducts(); }, [id]);
@@ -244,7 +326,98 @@ export default function PatientDetail() {
             </div>
           ))}
           <AddrDisplay label="Billing Address" addr={patient.billing_address} onEdit={() => openAddrModal('billing')} />
-          <AddrDisplay label="Shipping Address" addr={patient.shipping_address} onEdit={() => openAddrModal('shipping')} />
+          <AddrDisplay label="Default Shipping (profile)" addr={patient.shipping_address} onEdit={() => openAddrModal('shipping')} />
+        </div>
+
+        {/* ── Ship-To Address Book ─────────────────────────────────────────── */}
+        <div style={{ marginTop: 20, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px 20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>Shipping Addresses</div>
+            {shipAddrEditId === null && (
+              <button onClick={() => { setShipAddrForm({ label: '', street: '', street2: '', city: '', state: '', zip: '' }); setShipAddrEditId('new'); }}
+                style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)44', borderRadius: 6, padding: '2px 10px', cursor: 'pointer' }}>
+                + Add Address
+              </button>
+            )}
+          </div>
+
+          {/* New address form */}
+          {shipAddrEditId === 'new' && (
+            <form onSubmit={saveShipAddr} style={{ marginBottom: 14, padding: '12px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--accent)', borderRadius: 8 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12 }}>New Shipping Address</div>
+              <ShipAddrFields form={shipAddrForm} setForm={setShipAddrForm} />
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <button type="submit" disabled={shipAddrSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 18px', fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: shipAddrSaving ? 0.6 : 1 }}>
+                  {shipAddrSaving ? 'Saving…' : 'Save Address'}
+                </button>
+                <button type="button" onClick={() => setShipAddrEditId(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, padding: '7px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+          {shipAddrs.length === 0 && shipAddrEditId !== 'new' ? (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No saved shipping addresses.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {shipAddrs.map(addr => (
+                <div key={addr.id} style={{ border: `1px solid ${addr.is_default ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 8, padding: '12px 14px', background: addr.is_default ? 'var(--accent-light, #ede9fe)' : 'var(--bg-base)' }}>
+                  {shipAddrEditId === addr.id ? (
+                    <form onSubmit={saveShipAddr}>
+                      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>Edit Address</div>
+                      <ShipAddrFields form={shipAddrForm} setForm={setShipAddrForm} />
+                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                        <button type="submit" disabled={shipAddrSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 18px', fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: shipAddrSaving ? 0.6 : 1 }}>
+                          {shipAddrSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button type="button" onClick={() => setShipAddrEditId(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, padding: '7px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  ) : shipAddrDelId === addr.id ? (
+                    <div>
+                      <div style={{ fontSize: 13, marginBottom: 10 }}>Delete <strong>{addr.label}</strong>? This cannot be undone.</div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => deleteShipAddr(addr.id)} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>Yes, delete</button>
+                        <button onClick={() => setShipAddrDelId(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 600, fontSize: 14 }}>{addr.label}</span>
+                          {addr.is_default && <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-light, #ede9fe)', padding: '1px 7px', borderRadius: 9999 }}>Default</span>}
+                        </div>
+                        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                          <div>{addr.street}{addr.street2 ? `, ${addr.street2}` : ''}</div>
+                          <div>{addr.city}, {addr.state} {addr.zip}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end', flexShrink: 0 }}>
+                        <button onClick={() => { setShipAddrForm({ label: addr.label, street: addr.street, street2: addr.street2 || '', city: addr.city, state: addr.state, zip: addr.zip }); setShipAddrEditId(addr.id); }}
+                          style={{ fontSize: 12, color: 'var(--text-secondary)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>
+                          Edit
+                        </button>
+                        {!addr.is_default && (
+                          <button onClick={() => setDefaultShipAddr(addr.id)}
+                            style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                            Set Default
+                          </button>
+                        )}
+                        <button onClick={() => setShipAddrDelId(addr.id)}
+                          style={{ fontSize: 12, color: 'var(--danger)', background: 'none', border: '1px solid var(--danger)44', borderRadius: 6, padding: '3px 10px', cursor: 'pointer' }}>
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
