@@ -18,9 +18,16 @@ function NewOrderModal({ open, onClose, onCreated }) {
   const products = useOrderStore(s => s.products);
   const addToast = useOrderStore(s => s.addToast);
   const [patientId, setPatientId] = useState('');
+  const [patientSearch, setPatientSearch] = useState('');
+  const [patientLabel, setPatientLabel] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [notes, setNotes] = useState('');
   const [items, setItems] = useState([{ product_id: '', quantity: 1 }]);
   const [loading, setLoading] = useState(false);
+
+  const suggestions = patientSearch.length >= 3
+    ? patients.filter(p => p.name.toLowerCase().includes(patientSearch.toLowerCase()))
+    : [];
 
   function addItem() { setItems([...items, { product_id: '', quantity: 1 }]); }
   function removeItem(i) { setItems(items.filter((_, idx) => idx !== i)); }
@@ -46,15 +53,72 @@ function NewOrderModal({ open, onClose, onCreated }) {
     }
   }
 
+  function handleClose() {
+    setPatientId(''); setPatientSearch(''); setPatientLabel('');
+    setNotes(''); setItems([{ product_id: '', quantity: 1 }]);
+    setLoading(false);
+    onClose();
+  }
+
   return (
-    <Modal open={open} onClose={onClose} title="New Sales Order">
+    <Modal open={open} onClose={handleClose} title="New Sales Order">
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 16, position: 'relative' }}>
           <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Patient *</label>
-          <select value={patientId} onChange={e => setPatientId(e.target.value)} required style={{ width: '100%' }}>
-            <option value="">Select patient…</option>
-            {patients.map(p => <option key={p.id} value={p.id}>{p.name} — {p.email}</option>)}
-          </select>
+          {/* Hidden required field so form validation catches an unselected patient */}
+          <input type="hidden" value={patientId} required />
+          <input
+            type="text"
+            placeholder="Type 3+ letters to search by name…"
+            value={patientSearch}
+            autoComplete="off"
+            style={{ width: '100%', borderColor: patientId ? 'var(--success)' : undefined }}
+            onChange={e => {
+              setPatientSearch(e.target.value);
+              setPatientId('');
+              setPatientLabel('');
+              setShowSuggestions(true);
+            }}
+            onFocus={() => { if (patientSearch.length >= 3) setShowSuggestions(true); }}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+          />
+          {patientId && (
+            <div style={{ fontSize: 12, color: 'var(--success)', marginTop: 4 }}>
+              ✓ {patientLabel}
+            </div>
+          )}
+          {showSuggestions && suggestions.length > 0 && (
+            <div style={{
+              position: 'absolute', zIndex: 100, left: 0, right: 0,
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+              maxHeight: 220, overflowY: 'auto', marginTop: 2,
+            }}>
+              {suggestions.map(p => (
+                <div
+                  key={p.id}
+                  onMouseDown={() => {
+                    setPatientId(p.id);
+                    setPatientSearch(p.name);
+                    setPatientLabel(`${p.name} — ${p.email}`);
+                    setShowSuggestions(false);
+                  }}
+                  style={{ padding: '9px 14px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border)' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-elevated)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  <span style={{ fontWeight: 600 }}>{p.name}</span>
+                  <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{p.email}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {patientSearch.length > 0 && patientSearch.length < 3 && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Type {3 - patientSearch.length} more letter{3 - patientSearch.length !== 1 ? 's' : ''}…</div>
+          )}
+          {patientSearch.length >= 3 && suggestions.length === 0 && !patientId && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>No patients found matching "{patientSearch}"</div>
+          )}
         </div>
 
         <div style={{ marginBottom: 16 }}>
@@ -80,7 +144,7 @@ function NewOrderModal({ open, onClose, onCreated }) {
         </div>
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button type="button" onClick={onClose} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
+          <button type="button" onClick={handleClose} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
           <button type="submit" disabled={loading} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 24px', fontWeight: 600 }}>
             {loading ? 'Creating…' : 'Create Order'}
           </button>
