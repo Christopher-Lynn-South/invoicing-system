@@ -119,15 +119,24 @@ router.post('/zoho', csvFields, async (req, res) => {
     invoices:     { inserted: 0, skipped: 0, failed: 0, samples: [] },
     shipments:    { inserted: 0, skipped: 0, failed: 0, samples: [] },
     anomalies:    [],
+    // Diagnostic: row counts + detected column headers per file
+    diagnostics:  {},
   };
 
   function addAnomaly(msg) { report.anomalies.push(msg); }
   function sample(entity, obj) {
     if (report[entity].samples.length < 5) report[entity].samples.push(obj);
   }
+  function diagnose(key, rows) {
+    report.diagnostics[key] = {
+      rows: rows.length,
+      columns: rows.length > 0 ? Object.keys(rows[0]) : [],
+    };
+  }
 
   // ── 1. Patients / Accounts ──────────────────────────────────────────────────
   const accountRows = parseCSV(files.accounts?.[0]?.buffer);
+  diagnose('accounts', accountRows);
   const patientMap = {}; // name → id (or placeholder in preview)
 
   for (const row of accountRows) {
@@ -192,6 +201,7 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   // ── 2. Products / Items ─────────────────────────────────────────────────────
   const itemRows = parseCSV(files.items?.[0]?.buffer);
+  diagnose('items', itemRows);
   const productMap = {}; // name → id
 
   for (const row of itemRows) {
@@ -226,13 +236,14 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   // ── 3. Sales Orders ─────────────────────────────────────────────────────────
   const soRows = parseCSV(files.sales_orders?.[0]?.buffer);
+  diagnose('sales_orders', soRows);
   const orderMap = {}; // order_number → id
 
   // Group by order number (one row per line item in Zoho exports)
   const orderGroups = {};
   for (const row of soRows) {
-    const num = pick(row, 'Sales Order Number', 'Sales Order#', 'SO Number', 'Order Number', 'Sales Order No');
-    if (!num) continue;
+    const num = pick(row, 'Sales Order Number', 'Sales Order#', 'Sales Order #', 'SO Number', 'SO#', 'Order Number', 'Order#', 'Sales Order No', 'SalesOrder#');
+    if (!num) { addAnomaly(`Sales order row skipped — could not find order number. Row keys: ${Object.keys(row).join(', ')}`); continue; }
     if (!orderGroups[num]) orderGroups[num] = [];
     orderGroups[num].push(row);
   }
@@ -305,11 +316,12 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   // ── 4. Invoices ─────────────────────────────────────────────────────────────
   const invRows = parseCSV(files.invoices?.[0]?.buffer);
+  diagnose('invoices', invRows);
 
   // Group by invoice number
   const invGroups = {};
   for (const row of invRows) {
-    const num = pick(row, 'Invoice#', 'Invoice Number', 'Invoice No');
+    const num = pick(row, 'Invoice#', 'Invoice #', 'Invoice Number', 'Invoice No', 'INV#');
     if (!num) continue;
     if (!invGroups[num]) invGroups[num] = [];
     invGroups[num].push(row);
@@ -317,7 +329,7 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   for (const [invoice_number, rows] of Object.entries(invGroups)) {
     const row = rows[0];
-    const soNumber  = pick(row, 'Sales Order Number', 'Sales Order#', 'SO Number', 'Sales Order No');
+    const soNumber  = pick(row, 'Sales Order Number', 'Sales Order#', 'Sales Order #', 'SO Number', 'SO#', 'Sales Order No', 'SalesOrder#');
     const pay_status = normalizePayStatus(pick(row, 'Status', 'Invoice Status', 'Payment Status'));
     const subtotal  = parseFloat(pick(row, 'Sub Total', 'Subtotal', 'Sub-Total') || '0');
     const shipping  = parseFloat(pick(row, 'Shipping Charge', 'Shipping', 'Freight') || '0');
@@ -373,10 +385,11 @@ router.post('/zoho', csvFields, async (req, res) => {
 
   // ── 5. Shipments / Packages ─────────────────────────────────────────────────
   const pkgRows = parseCSV(files.packages?.[0]?.buffer);
+  diagnose('packages', pkgRows);
 
   for (const row of pkgRows) {
     const raw_import_id = pick(row, 'Package#', 'Package Number', 'Shipment#', 'Shipment Number');
-    const soNumber  = pick(row, 'Sales Order Number', 'Sales Order#', 'SO Number', 'Sales Order No');
+    const soNumber  = pick(row, 'Sales Order Number', 'Sales Order#', 'Sales Order #', 'SO Number', 'SO#', 'Sales Order No', 'SalesOrder#');
     const tracking  = pick(row, 'Tracking Number', 'Tracking #', 'AWB Number');
     const carrier   = pick(row, 'Carrier', 'Shipping Carrier', 'Ship Via');
     const ship_date = pick(row, 'Ship Date', 'Shipped Date', 'Date Shipped');

@@ -53,6 +53,32 @@ function CountBadge({ n, color }) {
   );
 }
 
+function DiagnosticsPanel({ diagnostics }) {
+  const [open, setOpen] = useState(false);
+  if (!diagnostics || Object.keys(diagnostics).length === 0) return null;
+  return (
+    <details open={open} onToggle={e => setOpen(e.target.open)}
+      style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
+      <summary style={{ cursor: 'pointer', fontWeight: 600, color: 'var(--text-muted)' }}>🔍 CSV diagnostics — column headers detected per file</summary>
+      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {Object.entries(diagnostics).map(([key, info]) => (
+          <div key={key}>
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{key}</span>
+            <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{info.rows} rows</span>
+            {info.rows === 0 ? (
+              <span style={{ color: 'var(--danger)', marginLeft: 8 }}>⚠ no rows parsed — check file format</span>
+            ) : (
+              <div style={{ marginTop: 4, color: 'var(--text-secondary)', lineHeight: 1.8 }}>
+                {info.columns.map(c => <code key={c} style={{ background: 'var(--bg-surface)', padding: '1px 5px', borderRadius: 3, marginRight: 6 }}>{c}</code>)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function EntityResult({ label, icon, data }) {
   const [showSamples, setShowSamples] = useState(false);
   if (!data) return null;
@@ -217,6 +243,8 @@ export default function Import() {
             <strong>Preview only — nothing has been imported yet.</strong> Review the counts below then click <strong>Execute Import</strong> to proceed.
           </div>
 
+          <DiagnosticsPanel diagnostics={report.diagnostics} />
+
           {FILES.map(f => (
             <EntityResult key={f.key} label={f.label} icon={f.icon} data={report[f.entity]} />
           ))}
@@ -261,6 +289,8 @@ export default function Import() {
               </div>
             </div>
           </div>
+
+          <DiagnosticsPanel diagnostics={report.diagnostics} />
 
           {FILES.map(f => (
             <EntityResult key={f.key} label={f.label} icon={f.icon} data={report[f.entity]} />
