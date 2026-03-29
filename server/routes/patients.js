@@ -1,9 +1,10 @@
 const express = require('express');
 const { db } = require('../db');
-const { patients, sales_orders, prescriptions, patient_contacts } = require('../db/schema');
+const { patients, sales_orders, prescriptions, patient_contacts, patient_shipping_addresses } = require('../db/schema');
 const { eq, desc } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { validate, patientSchema, prescriptionSchema, contactSchema } = require('../middleware/validate');
+const { z } = require('zod');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -286,6 +287,75 @@ router.delete('/:id/contacts/:contactId', requireLogin, async (req, res) => {
   try {
     await db.delete(patient_contacts).where(eq(patient_contacts.id, req.params.contactId));
     return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── Shipping Addresses (admin) ───────────────────────────────────────────────
+
+// GET /api/patients/:id/shipping-addresses
+router.get('/:id/shipping-addresses', requireLogin, async (req, res) => {
+  try {
+    const rows = await db.select()
+      .from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.patient_id, req.params.id))
+      .orderBy(desc(patient_shipping_addresses.is_default), patient_shipping_addresses.created_at);
+    return res.json(rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+const adminShippingAddrSchema = z.object({
+  label:   z.string().min(1).max(50).default('Home'),
+  street:  z.string().min(1).max(200),
+  street2: z.string().max(200).optional(),
+  city:    z.string().min(1).max(100),
+  state:   z.string().min(1).max(2),
+  zip:     z.string().min(1).max(20),
+}).strict();
+
+// POST /api/patients/:id/shipping-addresses
+router.post('/:id/shipping-addresses', requireLogin, async (req, res) => {
+  try {
+    const parsed = adminShippingAddrSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: parsed.error.errors[0].message });
+    }
+
+    const [patient] = await db.select({ id: patients.id }).from(patients).where(eq(patients.id, req.params.id)).limit(1);
+    if (!patient) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const existing = await db.select({ id: patient_shipping_addresses.id })
+      .from(patient_shipping_addresses)
+      .where(eq(patient_shipping_addresses.patient_id, req.params.id));
+    const isFirst = existing.length === 0;
+
+    const { label, street, street2, city, state, zip } = parsed.data;
+    const [row] = await db.insert(patient_shipping_addresses).values({
+      patient_id: req.params.id,
+      label:      label.trim(),
+      street:     street.trim(),
+      street2:    street2 ? street2.trim() : null,
+      city:       city.trim(),
+      state:      state.trim().toUpperCase(),
+      zip:        zip.trim(),
+      country:    'US',
+      is_default: isFirst,
+    }).returning();
+
+    // If first address, sync to patients.shipping_address for FedEx compatibility
+    if (isFirst) {
+      await db.update(patients).set({
+        shipping_address: { street: row.street, street2: row.street2 || undefined, city: row.city, state: row.state, zip: row.zip, country: row.country },
+        updated_at: new Date(),
+      }).where(eq(patients.id, req.params.id));
+    }
+
+    return res.status(201).json(row);
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR' });

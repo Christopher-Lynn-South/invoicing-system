@@ -107,6 +107,12 @@ export default function OrderDetail() {
   const [showEditOrder, setShowEditOrder] = useState(false);
   const [editOrderForm, setEditOrderForm] = useState({ patient_id: '', notes: '' });
   const [savingEditOrder, setSavingEditOrder] = useState(false);
+  // Shipping address selector state
+  const [patientShipAddrs, setPatientShipAddrs] = useState([]);
+  const [selectedAddrId, setSelectedAddrId]     = useState(null); // null = manual entry
+  const [addingAddr, setAddingAddr]             = useState(false);
+  const [newAddrForm, setNewAddrForm]           = useState({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
+  const [savingAddr, setSavingAddr]             = useState(false);
 
   async function load() {
     try {
@@ -738,23 +744,57 @@ export default function OrderDetail() {
               <div>
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Invoice paid. Ready to ship.</p>
                 <button onClick={() => {
-                  const a = order.patient?.shipping_address || order.patient?.billing_address || {};
                   const q = order.shipping_quote;
                   setShipForm(f => ({
                     ...f,
-                    service:           q?.service_type  || 'FEDEX_GROUND',
-                    box_type:          q?.package_type  || 'YOUR_PACKAGING',
-                    weight_lbs:        q?.weight_lbs    || '',
-                    length_in:         q?.length_in     || '',
-                    width_in:          q?.width_in      || '',
-                    height_in:         q?.height_in     || '',
-                    recipient_name:    order.patient?.name || '',
-                    recipient_street:  a.street  || '',
-                    recipient_city:    a.city    || '',
-                    recipient_state:   a.state   || '',
-                    recipient_zip:     a.zip     || '',
-                    recipient_country: a.country || 'US',
+                    service:    q?.service_type || 'FEDEX_GROUND',
+                    box_type:   q?.package_type || 'YOUR_PACKAGING',
+                    weight_lbs: q?.weight_lbs   || '',
+                    length_in:  q?.length_in    || '',
+                    width_in:   q?.width_in     || '',
+                    height_in:  q?.height_in    || '',
+                    recipient_name: order.patient?.name || '',
                   }));
+                  setAddingAddr(false);
+                  setNewAddrForm({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
+                  // Fetch saved shipping addresses for this patient
+                  api.get(`/patients/${order.patient_id}/shipping-addresses`)
+                    .then(r => {
+                      setPatientShipAddrs(r.data);
+                      const def = r.data.find(a => a.is_default) || r.data[0];
+                      if (def) {
+                        setSelectedAddrId(def.id);
+                        setShipForm(f => ({ ...f,
+                          recipient_street:  def.street,
+                          recipient_city:    def.city,
+                          recipient_state:   def.state,
+                          recipient_zip:     def.zip,
+                          recipient_country: def.country || 'US',
+                        }));
+                      } else {
+                        setSelectedAddrId(null);
+                        const a = order.patient?.shipping_address || order.patient?.billing_address || {};
+                        setShipForm(f => ({ ...f,
+                          recipient_street:  a.street  || '',
+                          recipient_city:    a.city    || '',
+                          recipient_state:   a.state   || '',
+                          recipient_zip:     a.zip     || '',
+                          recipient_country: a.country || 'US',
+                        }));
+                      }
+                    })
+                    .catch(() => {
+                      setPatientShipAddrs([]);
+                      setSelectedAddrId(null);
+                      const a = order.patient?.shipping_address || order.patient?.billing_address || {};
+                      setShipForm(f => ({ ...f,
+                        recipient_street:  a.street  || '',
+                        recipient_city:    a.city    || '',
+                        recipient_state:   a.state   || '',
+                        recipient_zip:     a.zip     || '',
+                        recipient_country: a.country || 'US',
+                      }));
+                    });
                   setShipModal(true);
                 }} style={{
                   background: 'var(--success)', color: '#fff', border: 'none',
@@ -1075,26 +1115,155 @@ export default function OrderDetail() {
             <input type="number" step="0.01" min="0.1" max={BOX_WEIGHT_MAX[shipForm.box_type] || undefined} required
               value={shipForm.weight_lbs} onChange={e => setShipForm({ ...shipForm, weight_lbs: e.target.value })} style={{ width: '100%' }} />
           </div>
-          <div style={{ marginBottom: 8, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-            <label style={{ display: 'block', fontSize: 13, color: 'var(--text-muted)', marginBottom: 10, fontWeight: 600 }}>Ship To (editable)</label>
+          {/* ── Ship To ────────────────────────────────────────────── */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginBottom: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)' }}>Ship To</span>
+              {!addingAddr && (
+                <button type="button" onClick={() => setAddingAddr(true)}
+                  style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}>
+                  + Save new address
+                </button>
+              )}
+            </div>
+
+            {/* Recipient name */}
             <div style={{ marginBottom: 8 }}>
               <input placeholder="Recipient name" value={shipForm.recipient_name}
                 onChange={e => setShipForm({ ...shipForm, recipient_name: e.target.value })} style={{ width: '100%' }} />
             </div>
-            <AddressAutocomplete
-              value={shipForm.recipient_street}
-              onChange={v => setShipForm(f => ({ ...f, recipient_street: v }))}
-              onSelect={a => setShipForm(f => ({ ...f, recipient_street: a.street, recipient_city: a.city, recipient_state: a.state, recipient_zip: a.zip, recipient_country: a.country }))}
-              placeholder="Street address"
-              style={{ marginBottom: 8 }}
-            />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: 6, marginBottom: 8 }}>
-              <input placeholder="City" value={shipForm.recipient_city} onChange={e => setShipForm({ ...shipForm, recipient_city: e.target.value })} />
-              <input placeholder="State" value={shipForm.recipient_state} onChange={e => setShipForm({ ...shipForm, recipient_state: e.target.value })} />
-              <input placeholder="ZIP" value={shipForm.recipient_zip} onChange={e => setShipForm({ ...shipForm, recipient_zip: e.target.value })} />
-            </div>
-            <input placeholder="Country (e.g. US)" value={shipForm.recipient_country}
-              onChange={e => setShipForm({ ...shipForm, recipient_country: e.target.value })} style={{ width: '100%' }} />
+
+            {/* Saved address cards */}
+            {patientShipAddrs.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                {patientShipAddrs.map(addr => (
+                  <label key={addr.id} style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
+                    background: selectedAddrId === addr.id ? 'var(--accent-light, #ede9fe)' : 'var(--bg-base)',
+                    border: `1px solid ${selectedAddrId === addr.id ? 'var(--accent)' : 'var(--border)'}`,
+                    borderRadius: 7, padding: '8px 12px',
+                  }}>
+                    <input type="radio" name="shipAddr" checked={selectedAddrId === addr.id} onChange={() => {
+                      setSelectedAddrId(addr.id);
+                      setShipForm(f => ({ ...f,
+                        recipient_street:  addr.street,
+                        recipient_city:    addr.city,
+                        recipient_state:   addr.state,
+                        recipient_zip:     addr.zip,
+                        recipient_country: addr.country || 'US',
+                      }));
+                    }} style={{ marginTop: 3, flexShrink: 0 }} />
+                    <div style={{ flex: 1, fontSize: 13 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 2 }}>
+                        {addr.label}
+                        {addr.is_default && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-light, #ede9fe)', padding: '1px 6px', borderRadius: 10 }}>Default</span>}
+                      </div>
+                      <div style={{ color: 'var(--text-secondary)' }}>
+                        {addr.street}{addr.street2 ? `, ${addr.street2}` : ''}, {addr.city}, {addr.state} {addr.zip}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+                {/* Manual entry option */}
+                <label style={{
+                  display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                  background: selectedAddrId === null ? 'var(--bg-elevated)' : 'var(--bg-base)',
+                  border: `1px solid ${selectedAddrId === null ? 'var(--accent)' : 'var(--border)'}`,
+                  borderRadius: 7, padding: '8px 12px', fontSize: 13,
+                }}>
+                  <input type="radio" name="shipAddr" checked={selectedAddrId === null} onChange={() => setSelectedAddrId(null)} style={{ flexShrink: 0 }} />
+                  <span style={{ color: 'var(--text-secondary)' }}>Enter address manually</span>
+                </label>
+              </div>
+            )}
+
+            {/* Manual address fields — shown when no saved addresses or "manually" selected */}
+            {(patientShipAddrs.length === 0 || selectedAddrId === null) && (
+              <div>
+                <AddressAutocomplete
+                  value={shipForm.recipient_street}
+                  onChange={v => setShipForm(f => ({ ...f, recipient_street: v }))}
+                  onSelect={a => setShipForm(f => ({ ...f, recipient_street: a.street, recipient_city: a.city, recipient_state: a.state, recipient_zip: a.zip, recipient_country: a.country }))}
+                  placeholder="Street address"
+                  style={{ marginBottom: 8 }}
+                />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: 6, marginBottom: 8 }}>
+                  <input placeholder="City" value={shipForm.recipient_city} onChange={e => setShipForm({ ...shipForm, recipient_city: e.target.value })} />
+                  <input placeholder="State" value={shipForm.recipient_state} onChange={e => setShipForm({ ...shipForm, recipient_state: e.target.value })} />
+                  <input placeholder="ZIP" value={shipForm.recipient_zip} onChange={e => setShipForm({ ...shipForm, recipient_zip: e.target.value })} />
+                </div>
+                <input placeholder="Country (e.g. US)" value={shipForm.recipient_country}
+                  onChange={e => setShipForm({ ...shipForm, recipient_country: e.target.value })} style={{ width: '100%' }} />
+              </div>
+            )}
+
+            {/* Add & save new address form */}
+            {addingAddr && (
+              <div style={{ marginTop: 10, padding: '12px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--accent)', borderRadius: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Save New Address</div>
+                <div style={{ marginBottom: 8 }}>
+                  <input placeholder="Label (e.g. Home, Office)" value={newAddrForm.label}
+                    onChange={e => setNewAddrForm(f => ({ ...f, label: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <input placeholder="Street" value={newAddrForm.street}
+                    onChange={e => setNewAddrForm(f => ({ ...f, street: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <input placeholder="Street 2 (optional)" value={newAddrForm.street2}
+                    onChange={e => setNewAddrForm(f => ({ ...f, street2: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: 6, marginBottom: 8 }}>
+                  <input placeholder="City" value={newAddrForm.city}
+                    onChange={e => setNewAddrForm(f => ({ ...f, city: e.target.value }))} />
+                  <input placeholder="State (e.g. TX)" maxLength={2} value={newAddrForm.state}
+                    onChange={e => setNewAddrForm(f => ({ ...f, state: e.target.value.toUpperCase() }))} />
+                  <input placeholder="ZIP" value={newAddrForm.zip}
+                    onChange={e => setNewAddrForm(f => ({ ...f, zip: e.target.value }))} />
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Country: United States (US)</div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" disabled={savingAddr} onClick={async () => {
+                    if (!newAddrForm.street || !newAddrForm.city || !newAddrForm.state || !newAddrForm.zip) {
+                      addToast('Street, city, state, and ZIP are required', 'error'); return;
+                    }
+                    setSavingAddr(true);
+                    try {
+                      const { data } = await api.post(`/patients/${order.patient_id}/shipping-addresses`, {
+                        label:   newAddrForm.label || 'Home',
+                        street:  newAddrForm.street,
+                        street2: newAddrForm.street2 || undefined,
+                        city:    newAddrForm.city,
+                        state:   newAddrForm.state,
+                        zip:     newAddrForm.zip,
+                      });
+                      setPatientShipAddrs(prev => [...prev, data]);
+                      setSelectedAddrId(data.id);
+                      setShipForm(f => ({ ...f,
+                        recipient_street:  data.street,
+                        recipient_city:    data.city,
+                        recipient_state:   data.state,
+                        recipient_zip:     data.zip,
+                        recipient_country: data.country || 'US',
+                      }));
+                      setAddingAddr(false);
+                      setNewAddrForm({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
+                      addToast('Address saved', 'success');
+                    } catch (err) {
+                      addToast(err.response?.data?.message || 'Failed to save address', 'error');
+                    } finally {
+                      setSavingAddr(false);
+                    }
+                  }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontWeight: 600, fontSize: 13, cursor: savingAddr ? 'not-allowed' : 'pointer', opacity: savingAddr ? 0.6 : 1 }}>
+                    {savingAddr ? 'Saving…' : 'Save & Use'}
+                  </button>
+                  <button type="button" onClick={() => setAddingAddr(false)}
+                    style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
             <button type="button" onClick={() => setShipModal(false)} style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-secondary)', borderRadius: 8, padding: '8px 20px' }}>Cancel</button>
