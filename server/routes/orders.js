@@ -173,9 +173,21 @@ router.get('/:id', requireLogin, async (req, res) => {
 });
 
 // PATCH /api/orders/:id — edit order header fields (draft only)
+const recipientAddressSchema = z.object({
+  address_id: z.string().uuid().optional(),
+  label:      z.string().max(50).optional(),
+  street:     z.string().min(1).max(200),
+  street2:    z.string().max(200).optional(),
+  city:       z.string().min(1).max(100),
+  state:      z.string().min(1).max(2),
+  zip:        z.string().min(1).max(20),
+  country:    z.string().max(10).default('US'),
+});
+
 const patchOrderSchema = z.object({
-  patient_id: z.string().uuid().optional(),
-  notes:      z.string().max(5000).optional(),
+  patient_id:        z.string().uuid().optional(),
+  notes:             z.string().max(5000).optional(),
+  recipient_address: recipientAddressSchema.optional(),
 }).strict().refine(d => Object.keys(d).length > 0, { message: 'Provide at least one field to update.' });
 
 router.patch('/:id', requireLogin, async (req, res) => {
@@ -187,8 +199,14 @@ router.patch('/:id', requireLogin, async (req, res) => {
 
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, req.params.id));
     if (!order) return res.status(404).json({ error: 'NOT_FOUND' });
-    if (order.status !== 'draft') {
+
+    // recipient_address can be updated at any pre-shipped status; other fields only while draft
+    const isDraftOnly = parsed.data.patient_id !== undefined || parsed.data.notes !== undefined;
+    if (isDraftOnly && order.status !== 'draft') {
       return res.status(400).json({ error: 'CANNOT_EDIT', message: 'Only draft orders can be edited.' });
+    }
+    if (['shipped', 'cancelled'].includes(order.status)) {
+      return res.status(400).json({ error: 'CANNOT_EDIT', message: 'Cannot edit a shipped or cancelled order.' });
     }
 
     const updates = { ...parsed.data, updated_at: new Date() };

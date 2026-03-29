@@ -66,6 +66,9 @@ const sales_orders = pgTable('sales_orders', {
   // { service_type, package_type, weight_lbs, length_in, width_in, height_in,
   //   net_charge, currency, transit_days, delivery_date, quoted_at }
   shipping_quote: jsonb('shipping_quote'),
+  // Staff-selected recipient address for this order; pre-fills the FedEx label modal
+  // { address_id?, label?, street, street2?, city, state, zip, country }
+  recipient_address: jsonb('recipient_address'),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
   updated_at: timestamp('updated_at', { withTimezone: true }).default(sql`now()`),
 });

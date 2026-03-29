@@ -129,7 +129,19 @@ export default function OrderDetail() {
     } catch { /* non-fatal */ }
   }
 
-  useEffect(() => { load(); loadEmailTemplates(); fetchPatients(); }, [id]);
+  useEffect(() => {
+    load();
+    loadEmailTemplates();
+    fetchPatients();
+  }, [id]);
+
+  // Fetch patient's saved shipping addresses whenever the order loads
+  useEffect(() => {
+    if (!order?.patient_id) return;
+    api.get(`/patients/${order.patient_id}/shipping-addresses`)
+      .then(r => setPatientShipAddrs(r.data))
+      .catch(() => setPatientShipAddrs([]));
+  }, [order?.patient_id]);
 
   async function saveEditOrder(e) {
     e.preventDefault();
@@ -504,6 +516,159 @@ export default function OrderDetail() {
         )}
       </div>
 
+      {/* ── Ship To Address ──────────────────────────────────────────────────── */}
+      {!hasShipment && (
+        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 20, marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600 }}>Ship To Address</h2>
+            {!addingAddr && (
+              <button type="button" onClick={() => setAddingAddr(true)}
+                style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 5, padding: '3px 10px', cursor: 'pointer' }}>
+                + Add new address
+              </button>
+            )}
+          </div>
+
+          {patientShipAddrs.length === 0 && !addingAddr ? (
+            <div>
+              {order.recipient_address ? (
+                <div style={{ fontSize: 13, background: 'var(--bg-elevated)', border: '1px solid var(--accent)', borderRadius: 7, padding: '10px 14px' }}>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>{order.recipient_address.label || 'Ship To'}</div>
+                  <div style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                    {order.recipient_address.street}{order.recipient_address.street2 ? `, ${order.recipient_address.street2}` : ''}<br />
+                    {order.recipient_address.city}, {order.recipient_address.state} {order.recipient_address.zip}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                  No shipping addresses saved for this patient. Click "+ Add new address" to add one, or the address will default to the patient's profile address when creating the label.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {patientShipAddrs.map(addr => {
+                const isSelected = order.recipient_address?.address_id === addr.id ||
+                  (!order.recipient_address && addr.is_default);
+                return (
+                  <div
+                    key={addr.id}
+                    onClick={async () => {
+                      try {
+                        const { data } = await api.patch(`/orders/${id}`, {
+                          recipient_address: { address_id: addr.id, label: addr.label, street: addr.street, street2: addr.street2 || undefined, city: addr.city, state: addr.state, zip: addr.zip, country: addr.country || 'US' },
+                        });
+                        setOrder(prev => ({ ...prev, recipient_address: data.recipient_address }));
+                        addToast('Shipping address saved', 'success');
+                      } catch (err) {
+                        addToast(err.response?.data?.message || 'Failed to save address', 'error');
+                      }
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 12, cursor: 'pointer',
+                      background: isSelected ? 'var(--accent-light, #ede9fe)' : 'var(--bg-base)',
+                      border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`,
+                      borderRadius: 8, padding: '10px 14px',
+                    }}
+                  >
+                    <div style={{ width: 16, height: 16, borderRadius: '50%', border: `2px solid ${isSelected ? 'var(--accent)' : 'var(--border)'}`, background: isSelected ? 'var(--accent)' : 'transparent', marginTop: 2, flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                        <span style={{ fontWeight: 600, fontSize: 14 }}>{addr.label}</span>
+                        {addr.is_default && <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-light, #ede9fe)', padding: '1px 6px', borderRadius: 10 }}>Default</span>}
+                        {isSelected && <span style={{ fontSize: 11, color: 'var(--success)', fontWeight: 600 }}>✓ Selected</span>}
+                      </div>
+                      <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        {addr.street}{addr.street2 ? `, ${addr.street2}` : ''}, {addr.city}, {addr.state} {addr.zip}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add new address inline form */}
+          {addingAddr && (
+            <div style={{ marginTop: patientShipAddrs.length > 0 ? 12 : 0, padding: '12px 14px', background: 'var(--bg-elevated)', border: '1px solid var(--accent)', borderRadius: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>New Shipping Address</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Label</div>
+                  <input placeholder="e.g. Home, Office" value={newAddrForm.label}
+                    onChange={e => setNewAddrForm(f => ({ ...f, label: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Street</div>
+                  <input placeholder="Street address" value={newAddrForm.street}
+                    onChange={e => setNewAddrForm(f => ({ ...f, street: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Street 2 (optional)</div>
+                <input placeholder="Apt, Suite, Unit…" value={newAddrForm.street2}
+                  onChange={e => setNewAddrForm(f => ({ ...f, street2: e.target.value }))} style={{ width: '100%' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px', gap: 8, marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>City</div>
+                  <input placeholder="City" value={newAddrForm.city}
+                    onChange={e => setNewAddrForm(f => ({ ...f, city: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>State</div>
+                  <input placeholder="TX" maxLength={2} value={newAddrForm.state}
+                    onChange={e => setNewAddrForm(f => ({ ...f, state: e.target.value.toUpperCase() }))} style={{ width: '100%' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>ZIP</div>
+                  <input placeholder="ZIP" value={newAddrForm.zip}
+                    onChange={e => setNewAddrForm(f => ({ ...f, zip: e.target.value }))} style={{ width: '100%' }} />
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Country: United States (US)</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" disabled={savingAddr} onClick={async () => {
+                  if (!newAddrForm.street || !newAddrForm.city || !newAddrForm.state || !newAddrForm.zip) {
+                    addToast('Street, city, state, and ZIP are required', 'error'); return;
+                  }
+                  setSavingAddr(true);
+                  try {
+                    const { data: newAddr } = await api.post(`/patients/${order.patient_id}/shipping-addresses`, {
+                      label:   newAddrForm.label || 'Home',
+                      street:  newAddrForm.street,
+                      street2: newAddrForm.street2 || undefined,
+                      city:    newAddrForm.city,
+                      state:   newAddrForm.state,
+                      zip:     newAddrForm.zip,
+                    });
+                    // Also set as the order's recipient_address
+                    const { data: updatedOrder } = await api.patch(`/orders/${id}`, {
+                      recipient_address: { address_id: newAddr.id, label: newAddr.label, street: newAddr.street, street2: newAddr.street2 || undefined, city: newAddr.city, state: newAddr.state, zip: newAddr.zip, country: newAddr.country || 'US' },
+                    });
+                    setPatientShipAddrs(prev => [...prev, newAddr]);
+                    setOrder(prev => ({ ...prev, recipient_address: updatedOrder.recipient_address }));
+                    setAddingAddr(false);
+                    setNewAddrForm({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
+                    addToast('Address saved and selected', 'success');
+                  } catch (err) {
+                    addToast(err.response?.data?.message || 'Failed to save address', 'error');
+                  } finally {
+                    setSavingAddr(false);
+                  }
+                }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 16px', fontWeight: 600, fontSize: 13, cursor: savingAddr ? 'not-allowed' : 'pointer', opacity: savingAddr ? 0.6 : 1 }}>
+                  {savingAddr ? 'Saving…' : 'Save & Select'}
+                </button>
+                <button type="button" onClick={() => { setAddingAddr(false); setNewAddrForm({ label: '', street: '', street2: '', city: '', state: '', zip: '' }); }}
+                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, padding: '7px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
         {/* Left: Line Items + Invoice */}
         <div>
@@ -745,56 +910,29 @@ export default function OrderDetail() {
                 <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>Invoice paid. Ready to ship.</p>
                 <button onClick={() => {
                   const q = order.shipping_quote;
-                  setShipForm(f => ({
-                    ...f,
-                    service:    q?.service_type || 'FEDEX_GROUND',
-                    box_type:   q?.package_type || 'YOUR_PACKAGING',
-                    weight_lbs: q?.weight_lbs   || '',
-                    length_in:  q?.length_in    || '',
-                    width_in:   q?.width_in     || '',
-                    height_in:  q?.height_in    || '',
-                    recipient_name: order.patient?.name || '',
-                  }));
+                  // Use saved recipient_address from order, or fall back to patient default
+                  const saved = order.recipient_address;
+                  const a = saved || order.patient?.shipping_address || order.patient?.billing_address || {};
+                  const matchedSaved = saved?.address_id
+                    ? patientShipAddrs.find(x => x.id === saved.address_id) : null;
+                  setSelectedAddrId(matchedSaved?.id || (patientShipAddrs[0]?.id ?? null));
                   setAddingAddr(false);
                   setNewAddrForm({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
-                  // Fetch saved shipping addresses for this patient
-                  api.get(`/patients/${order.patient_id}/shipping-addresses`)
-                    .then(r => {
-                      setPatientShipAddrs(r.data);
-                      const def = r.data.find(a => a.is_default) || r.data[0];
-                      if (def) {
-                        setSelectedAddrId(def.id);
-                        setShipForm(f => ({ ...f,
-                          recipient_street:  def.street,
-                          recipient_city:    def.city,
-                          recipient_state:   def.state,
-                          recipient_zip:     def.zip,
-                          recipient_country: def.country || 'US',
-                        }));
-                      } else {
-                        setSelectedAddrId(null);
-                        const a = order.patient?.shipping_address || order.patient?.billing_address || {};
-                        setShipForm(f => ({ ...f,
-                          recipient_street:  a.street  || '',
-                          recipient_city:    a.city    || '',
-                          recipient_state:   a.state   || '',
-                          recipient_zip:     a.zip     || '',
-                          recipient_country: a.country || 'US',
-                        }));
-                      }
-                    })
-                    .catch(() => {
-                      setPatientShipAddrs([]);
-                      setSelectedAddrId(null);
-                      const a = order.patient?.shipping_address || order.patient?.billing_address || {};
-                      setShipForm(f => ({ ...f,
-                        recipient_street:  a.street  || '',
-                        recipient_city:    a.city    || '',
-                        recipient_state:   a.state   || '',
-                        recipient_zip:     a.zip     || '',
-                        recipient_country: a.country || 'US',
-                      }));
-                    });
+                  setShipForm(f => ({
+                    ...f,
+                    service:           q?.service_type || 'FEDEX_GROUND',
+                    box_type:          q?.package_type || 'YOUR_PACKAGING',
+                    weight_lbs:        q?.weight_lbs   || '',
+                    length_in:         q?.length_in    || '',
+                    width_in:          q?.width_in     || '',
+                    height_in:         q?.height_in    || '',
+                    recipient_name:    order.patient?.name || '',
+                    recipient_street:  a.street  || '',
+                    recipient_city:    a.city    || '',
+                    recipient_state:   a.state   || '',
+                    recipient_zip:     a.zip     || '',
+                    recipient_country: a.country || 'US',
+                  }));
                   setShipModal(true);
                 }} style={{
                   background: 'var(--success)', color: '#fff', border: 'none',
