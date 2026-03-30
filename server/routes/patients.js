@@ -1,7 +1,7 @@
 const express = require('express');
 const { db } = require('../db');
 const { patients, sales_orders, prescriptions, patient_contacts, patient_shipping_addresses } = require('../db/schema');
-const { eq, desc, and } = require('drizzle-orm');
+const { eq, desc, and, isNull, inArray } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { validate, patientSchema, prescriptionSchema, contactSchema } = require('../middleware/validate');
 const { z } = require('zod');
@@ -62,8 +62,39 @@ const upload = multer({
 // GET /api/patients
 router.get('/', requireLogin, async (req, res) => {
   try {
-    const rows = await db.select().from(patients).orderBy(desc(patients.created_at));
+    const rows = await db.select().from(patients)
+      .where(isNull(patients.deleted_at))
+      .orderBy(desc(patients.created_at));
     return res.json(rows);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// DELETE /api/patients/:id  (soft delete)
+router.delete('/:id', requireLogin, async (req, res) => {
+  try {
+    const [row] = await db.select({ id: patients.id }).from(patients)
+      .where(and(eq(patients.id, req.params.id), isNull(patients.deleted_at))).limit(1);
+    if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
+    await db.update(patients).set({ deleted_at: new Date() }).where(eq(patients.id, req.params.id));
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// POST /api/patients/bulk-delete  (soft delete multiple)
+router.post('/bulk-delete', requireLogin, async (req, res) => {
+  try {
+    const ids = req.body.ids;
+    if (!Array.isArray(ids) || ids.length === 0)
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'ids must be a non-empty array' });
+    await db.update(patients).set({ deleted_at: new Date() })
+      .where(and(inArray(patients.id, ids), isNull(patients.deleted_at)));
+    return res.json({ ok: true, deleted: ids.length });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
