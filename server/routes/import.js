@@ -242,7 +242,7 @@ router.post('/zoho', csvFields, async (req, res) => {
   // Group by order number (one row per line item in Zoho exports)
   const orderGroups = {};
   for (const row of soRows) {
-    const num = pick(row, 'Sales Order Number', 'Sales Order#', 'Sales Order #', 'SO Number', 'SO#', 'Order Number', 'Order#', 'Sales Order No', 'SalesOrder#');
+    const num = pick(row, 'SalesOrder Number', 'Sales Order Number', 'Sales Order#', 'Sales Order #', 'SO Number', 'SO#', 'Order Number', 'Order#', 'Sales Order No', 'SalesOrder#');
     if (!num) { addAnomaly(`Sales order row skipped — could not find order number. Row keys: ${Object.keys(row).join(', ')}`); continue; }
     if (!orderGroups[num]) orderGroups[num] = [];
     orderGroups[num].push(row);
@@ -252,8 +252,8 @@ router.post('/zoho', csvFields, async (req, res) => {
     const row = rows[0];
     const patientName = pick(row, 'Customer Name', 'Contact Name', 'Patient Name', 'Account Name', 'Bill To');
     const status = normalizeStatus(pick(row, 'Status', 'Order Status', 'Sales Order Status'));
-    const created_at = pick(row, 'Sales Order Date', 'Date', 'Order Date', 'Created Date');
-    const notes = pick(row, 'Notes', 'Comments', 'Internal Notes', 'Customer Notes');
+    const created_at = pick(row, 'Order Date', 'Sales Order Date', 'Date', 'Created Date');
+    const notes = pick(row, 'Notes', 'Terms & Conditions', 'Comments', 'Internal Notes', 'Customer Notes');
     const patient_id = lookupPatient(patientMap, patientName);
 
     if (!patient_id) {
@@ -264,9 +264,9 @@ router.post('/zoho', csvFields, async (req, res) => {
 
     const lineItems = rows.map(r => {
       const itemName   = pick(r, 'Item Name', 'Product Name', 'Line Item');
-      const quantity   = parseInt(pick(r, 'Quantity', 'Qty') || '1', 10);
+      const quantity   = parseInt(pick(r, 'QuantityOrdered', 'Quantity', 'Qty') || '1', 10);
       const unit_price = parseFloat(pick(r, 'Item Price', 'Rate', 'Unit Price') || '0');
-      const line_total = parseFloat(pick(r, 'Line Total', 'Amount', 'Item Total') || String(unit_price * quantity));
+      const line_total = parseFloat(pick(r, 'Item Total', 'Line Total', 'Amount') || String(unit_price * quantity));
       const product_id = productMap[itemName];
       return { itemName, quantity, unit_price, line_total, product_id };
     }).filter(i => i.itemName && i.unit_price >= 0);
@@ -280,11 +280,23 @@ router.post('/zoho', csvFields, async (req, res) => {
           orderMap[order_number] = existing.id;
           report.sales_orders.skipped++;
         } else {
+          // Pull shipping address from the SO row if present
+          const shipStreet = pick(row, 'Shipping Address', 'Shipping Street');
+          const recipient_address = shipStreet ? {
+            street:  shipStreet,
+            street2: pick(row, 'Shipping Street2') || undefined,
+            city:    pick(row, 'Shipping City'),
+            state:   pick(row, 'Shipping State'),
+            zip:     pick(row, 'Shipping Code', 'Shipping Zip'),
+            country: normalizeCountry(pick(row, 'Shipping Country')) || 'US',
+          } : null;
+
           const [ins] = await db.insert(sales_orders).values({
             order_number,
             patient_id: String(patient_id),
             status,
             notes: notes || null,
+            recipient_address,
             created_at: created_at ? new Date(created_at) : new Date(),
             updated_at: new Date(),
           }).returning();
