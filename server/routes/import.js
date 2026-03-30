@@ -254,11 +254,62 @@ router.post('/zoho', csvFields, async (req, res) => {
     const status = normalizeStatus(pick(row, 'Status', 'Order Status', 'Sales Order Status'));
     const created_at = pick(row, 'Order Date', 'Sales Order Date', 'Date', 'Created Date');
     const notes = pick(row, 'Notes', 'Terms & Conditions', 'Comments', 'Internal Notes', 'Customer Notes');
-    const patient_id = lookupPatient(patientMap, patientName);
+    let patient_id = lookupPatient(patientMap, patientName);
+
+    // ── Auto-create patient from order row if not found ──────────────────────
+    if (!patient_id && patientName) {
+      const billingAddr = {
+        street:  pick(row, 'Billing Address', 'Billing Street'),
+        city:    pick(row, 'Billing City'),
+        state:   pick(row, 'Billing State'),
+        zip:     pick(row, 'Billing Code', 'Billing Zip'),
+        country: normalizeCountry(pick(row, 'Billing Country')) || 'US',
+      };
+      const shipStreetAc = pick(row, 'Shipping Address', 'Shipping Street');
+      const shippingAddr = shipStreetAc ? {
+        street:  shipStreetAc,
+        street2: pick(row, 'Shipping Street2') || undefined,
+        city:    pick(row, 'Shipping City'),
+        state:   pick(row, 'Shipping State'),
+        zip:     pick(row, 'Shipping Code', 'Shipping Zip'),
+        country: normalizeCountry(pick(row, 'Shipping Country')) || 'US',
+      } : null;
+
+      if (execute) {
+        try {
+          // Check DB again by name (may have been inserted by a prior order in this batch)
+          const stripped = stripSalutation(patientName);
+          const [dbMatch] = await db.select({ id: patients.id })
+            .from(patients)
+            .where(eq(patients.name, stripped || patientName))
+            .limit(1);
+          if (dbMatch) {
+            patient_id = dbMatch.id;
+          } else {
+            const [created] = await db.insert(patients).values({
+              name: stripped || patientName,
+              billing_address: billingAddr.street ? billingAddr : undefined,
+              shipping_address: shippingAddr,
+            }).returning();
+            patient_id = created.id;
+            report.patients.inserted++;
+          }
+          registerPatient(patientMap, patientName, patient_id);
+        } catch (err) {
+          addAnomaly(`Order ${order_number}: could not auto-create patient "${patientName}" — ${err.message}`);
+          continue;
+        }
+      } else {
+        // Preview: register a synthetic entry so downstream orders for same customer resolve
+        const syntheticId = `preview-patient-${patientName}`;
+        registerPatient(patientMap, patientName, syntheticId);
+        patient_id = syntheticId;
+        report.patients.inserted++;
+      }
+    }
 
     if (!patient_id) {
-      addAnomaly(`Order ${order_number}: patient not found "${patientName}" — ensure contacts were imported first`);
-      if (!execute) orderMap[order_number] = `preview-${order_number}`;
+      addAnomaly(`Order ${order_number}: skipped — no customer name in row`);
       continue;
     }
 
