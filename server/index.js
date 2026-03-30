@@ -83,6 +83,11 @@ app.use('/api/auth/login', authLimiter);
 app.use('/api/customer/login', authLimiter);
 app.use('/api/customer/forgot-password', authLimiter);
 app.use('/api/customer/reset-password', authLimiter);
+// Public runtime config (no auth required — only exposes safe public keys)
+app.get('/api/config', (req, res) => {
+  res.json({ googleMapsKey: process.env.GOOGLE_MAPS_API_KEY || '' });
+});
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/customer', require('./routes/patient-auth'));
