@@ -113,6 +113,10 @@ export default function OrderDetail() {
   const [addingAddr, setAddingAddr]             = useState(false);
   const [newAddrForm, setNewAddrForm]           = useState({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
   const [savingAddr, setSavingAddr]             = useState(false);
+  const [editingAddrId, setEditingAddrId]       = useState(null); // uuid of addr being edited
+  const [editAddrForm, setEditAddrForm]         = useState({ label: '', street: '', street2: '', city: '', state: '', zip: '' });
+  const [savingEditAddr, setSavingEditAddr]     = useState(false);
+  const [deleteAddrId, setDeleteAddrId]         = useState(null); // uuid awaiting delete confirm
 
   async function load() {
     try {
@@ -550,6 +554,108 @@ export default function OrderDetail() {
               {patientShipAddrs.map(addr => {
                 const isSelected = order.recipient_address?.address_id === addr.id ||
                   (!order.recipient_address && addr.is_default);
+
+                if (editingAddrId === addr.id) {
+                  return (
+                    <div key={addr.id} style={{ border: '1px solid var(--accent)', borderRadius: 8, padding: '12px 14px', background: 'var(--bg-elevated)' }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Edit Address</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Label</div>
+                          <input value={editAddrForm.label} onChange={e => setEditAddrForm(f => ({ ...f, label: e.target.value }))} style={{ width: '100%' }} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Street</div>
+                          <input value={editAddrForm.street} onChange={e => setEditAddrForm(f => ({ ...f, street: e.target.value }))} style={{ width: '100%' }} />
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Street 2</div>
+                        <input placeholder="Apt, Suite…" value={editAddrForm.street2} onChange={e => setEditAddrForm(f => ({ ...f, street2: e.target.value }))} style={{ width: '100%' }} />
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px', gap: 8, marginBottom: 10 }}>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>City</div>
+                          <input value={editAddrForm.city} onChange={e => setEditAddrForm(f => ({ ...f, city: e.target.value }))} style={{ width: '100%' }} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>State</div>
+                          <input maxLength={2} value={editAddrForm.state} onChange={e => setEditAddrForm(f => ({ ...f, state: e.target.value.toUpperCase() }))} style={{ width: '100%' }} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>ZIP</div>
+                          <input value={editAddrForm.zip} onChange={e => setEditAddrForm(f => ({ ...f, zip: e.target.value }))} style={{ width: '100%' }} />
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" disabled={savingEditAddr} onClick={async () => {
+                          if (!editAddrForm.street || !editAddrForm.city || !editAddrForm.state || !editAddrForm.zip) {
+                            addToast('Street, city, state, and ZIP are required', 'error'); return;
+                          }
+                          setSavingEditAddr(true);
+                          try {
+                            const { data: updated } = await api.patch(`/patients/${order.patient_id}/shipping-addresses/${addr.id}`, editAddrForm);
+                            setPatientShipAddrs(prev => prev.map(a => a.id === addr.id ? updated : a));
+                            // If this was the selected address on the order, update recipient_address too
+                            if (order.recipient_address?.address_id === addr.id) {
+                              const { data: updatedOrder } = await api.patch(`/orders/${id}`, {
+                                recipient_address: { address_id: updated.id, label: updated.label, street: updated.street, street2: updated.street2 || undefined, city: updated.city, state: updated.state, zip: updated.zip, country: updated.country || 'US' },
+                              });
+                              setOrder(prev => ({ ...prev, recipient_address: updatedOrder.recipient_address }));
+                            }
+                            setEditingAddrId(null);
+                            addToast('Address updated', 'success');
+                          } catch (err) {
+                            addToast(err.response?.data?.message || 'Failed to update address', 'error');
+                          } finally { setSavingEditAddr(false); }
+                        }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '7px 16px', fontWeight: 600, fontSize: 13, cursor: savingEditAddr ? 'not-allowed' : 'pointer', opacity: savingEditAddr ? 0.6 : 1 }}>
+                          {savingEditAddr ? 'Saving…' : 'Save'}
+                        </button>
+                        <button type="button" onClick={() => setEditingAddrId(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, padding: '7px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (deleteAddrId === addr.id) {
+                  return (
+                    <div key={addr.id} style={{ border: '1px solid var(--danger)', borderRadius: 8, padding: '12px 14px', background: '#ef444411' }}>
+                      <div style={{ fontSize: 13, marginBottom: 10 }}>Delete <strong>{addr.label}</strong>? This cannot be undone.</div>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" onClick={async () => {
+                          try {
+                            await api.delete(`/patients/${order.patient_id}/shipping-addresses/${addr.id}`);
+                            setPatientShipAddrs(prev => {
+                              const remaining = prev.filter(a => a.id !== addr.id);
+                              if (addr.is_default && remaining.length > 0) {
+                                const oldest = [...remaining].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+                                return remaining.map(a => ({ ...a, is_default: a.id === oldest.id }));
+                              }
+                              return remaining;
+                            });
+                            // Clear order's recipient_address if it pointed to this address
+                            if (order.recipient_address?.address_id === addr.id) {
+                              await api.patch(`/orders/${id}`, { recipient_address: null });
+                              setOrder(prev => ({ ...prev, recipient_address: null }));
+                            }
+                            setDeleteAddrId(null);
+                            addToast('Address deleted', 'success');
+                          } catch (err) {
+                            addToast(err.response?.data?.message || 'Failed to delete address', 'error');
+                          }
+                        }} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 7, padding: '6px 14px', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+                          Yes, delete
+                        </button>
+                        <button type="button" onClick={() => setDeleteAddrId(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 7, padding: '6px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={addr.id}
@@ -581,6 +687,16 @@ export default function OrderDetail() {
                       <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                         {addr.street}{addr.street2 ? `, ${addr.street2}` : ''}, {addr.city}, {addr.state} {addr.zip}
                       </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                      <button type="button" onClick={() => { setEditAddrForm({ label: addr.label, street: addr.street, street2: addr.street2 || '', city: addr.city, state: addr.state, zip: addr.zip }); setEditingAddrId(addr.id); }}
+                        style={{ fontSize: 11, color: 'var(--text-secondary)', background: 'none', border: '1px solid var(--border)', borderRadius: 5, padding: '2px 8px', cursor: 'pointer' }}>
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => setDeleteAddrId(addr.id)}
+                        style={{ fontSize: 11, color: 'var(--danger)', background: 'none', border: '1px solid var(--danger)44', borderRadius: 5, padding: '2px 8px', cursor: 'pointer' }}>
+                        Delete
+                      </button>
                     </div>
                   </div>
                 );
