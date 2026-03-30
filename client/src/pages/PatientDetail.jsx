@@ -310,6 +310,7 @@ export default function PatientDetail() {
 
       {/* Overview */}
       {tab === 'overview' && (
+        <>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
           {[
             ['Email', patient.email],
@@ -419,6 +420,7 @@ export default function PatientDetail() {
             </div>
           )}
         </div>
+        </>
       )}
 
       {/* Prescriptions */}
