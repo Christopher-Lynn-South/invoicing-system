@@ -87,13 +87,14 @@ export default function Invoices() {
               <th style={{ padding: '12px 16px', textAlign: 'right' }}>Total</th>
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Method</th>
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Status</th>
+              <th style={{ padding: '12px 16px', textAlign: 'left' }}>Issued</th>
               <th style={{ padding: '12px 16px', textAlign: 'left' }}>Due</th>
               <th style={{ padding: '12px 16px', textAlign: 'center' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {invoices.length === 0 ? (
-              <tr><td colSpan={10} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No invoices yet</td></tr>
+              <tr><td colSpan={11} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No invoices yet</td></tr>
             ) : invoices.map(inv => (
               <tr key={inv.id} style={{ borderTop: '1px solid var(--border)' }}>
                 <td style={{ padding: '12px 16px' }}>
@@ -117,6 +118,7 @@ export default function Invoices() {
                 <td style={{ padding: '12px 16px' }}>
                   <span className={`badge badge-${inv.pay_status}`}>{inv.pay_status}</span>
                 </td>
+                <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 13 }}>{inv.issued_date ? fmtDate(inv.issued_date) : '—'}</td>
                 <td style={{ padding: '12px 16px', color: 'var(--text-muted)', fontSize: 13 }}>{fmtDate(inv.due_date)}</td>
                 <td style={{ padding: '12px 16px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                   <div style={{ display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>

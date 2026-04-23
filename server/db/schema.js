@@ -99,6 +99,7 @@ const invoices = pgTable('invoices', {
   usdc_tx_hash: text('usdc_tx_hash'),
   paid_at: timestamp('paid_at', { withTimezone: true }),
   due_date: date('due_date'),
+  issued_date: date('issued_date').notNull().default(sql`current_date`),
   pdf_url: text('pdf_url'),
   sent_at: timestamp('sent_at', { withTimezone: true }),
   pay_token: text('pay_token').unique(),

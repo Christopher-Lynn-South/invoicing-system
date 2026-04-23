@@ -48,7 +48,10 @@ async function generateInvoicePDF({ invoice, order, patient, items }, outputPath
     doc.fontSize(11).fillColor(GRAY).font('Helvetica');
     doc.text(`Invoice #: ${invoice.invoice_number}`, 400, 86, { align: 'right' });
     doc.text(`Order #: ${order.order_number}`, 400, 100, { align: 'right' });
-    doc.text(`Date: ${new Date(invoice.created_at).toLocaleDateString('en-US')}`, 400, 114, { align: 'right' });
+    const invoiceDate = invoice.issued_date
+      ? new Date(invoice.issued_date + 'T12:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : new Date(invoice.created_at).toLocaleDateString('en-US');
+    doc.text(`Date: ${invoiceDate}`, 400, 114, { align: 'right' });
     doc.text(`Due: ${invoice.due_date}`, 400, 128, { align: 'right' });
 
     // ─── Divider ───────────────────────────────────────────────────────────────

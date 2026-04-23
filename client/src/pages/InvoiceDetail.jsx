@@ -71,6 +71,7 @@ export default function InvoiceDetail() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editStatus, setEditStatus] = useState(null); // null = not editing
+  const [editIssuedDate, setEditIssuedDate] = useState(null); // null = not editing
   const [confirm, setConfirm] = useState(null); // { action: 'void'|'cancel'|'delete', label, message }
 
   async function load() {
@@ -113,6 +114,20 @@ export default function InvoiceDetail() {
       await api.patch(`/invoices/${id}`, { pay_status: editStatus });
       addToast(`Invoice updated to ${editStatus}`, 'success');
       setEditStatus(null);
+      load();
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Update failed', 'error');
+    }
+    setSaving(false);
+  }
+
+  async function saveIssuedDate() {
+    if (!editIssuedDate || editIssuedDate === data.issued_date) { setEditIssuedDate(null); return; }
+    setSaving(true);
+    try {
+      await api.patch(`/invoices/${id}`, { issued_date: editIssuedDate });
+      addToast('Invoice date updated', 'success');
+      setEditIssuedDate(null);
       load();
     } catch (err) {
       addToast(err.response?.data?.message || 'Update failed', 'error');
@@ -244,6 +259,31 @@ export default function InvoiceDetail() {
                 <Row label="Method" value={data.pay_method ? data.pay_method.replace(/_/g, ' ').toUpperCase() : '—'} />
                 <Row label="Paid on" value={data.paid_at ? fmtDatetime(data.paid_at) : '—'} />
                 <Row label="Due date" value={data.due_date ? fmtDate(data.due_date) : '—'} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 10, alignItems: 'center' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Invoice date</span>
+                  {editIssuedDate === null ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {data.issued_date ? fmtDate(data.issued_date) : '—'}
+                      <button onClick={() => setEditIssuedDate(data.issued_date || '')} style={{
+                        fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                        border: '1px solid var(--accent)', color: 'var(--accent)', background: 'none',
+                      }}>Edit</button>
+                    </span>
+                  ) : (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input type="date" value={editIssuedDate} onChange={e => setEditIssuedDate(e.target.value)}
+                        style={{ fontSize: 12, padding: '2px 6px', borderRadius: 4, border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-primary)' }} />
+                      <button onClick={saveIssuedDate} disabled={saving} style={{
+                        fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                        background: 'var(--accent)', color: '#fff', border: 'none', opacity: saving ? 0.6 : 1,
+                      }}>Save</button>
+                      <button onClick={() => setEditIssuedDate(null)} style={{
+                        fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: 'pointer',
+                        border: '1px solid var(--border)', color: 'var(--text-muted)', background: 'none',
+                      }}>×</button>
+                    </span>
+                  )}
+                </div>
               </>
             )}
             {editStatus !== null && (

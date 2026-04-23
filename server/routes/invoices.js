@@ -70,6 +70,7 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
     const shipping_charge = order.shipping_quote?.net_charge ? parseFloat(order.shipping_quote.net_charge) : 0;
     const invoice_number = await generateInvoiceNumber();
     const due_date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const issued_date = req.body.issued_date || new Date().toISOString().split('T')[0];
 
     const [invoice] = await db.insert(invoices).values({
       invoice_number,
@@ -80,6 +81,7 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
       total: (subtotal + shipping_charge).toFixed(2),
       pay_status: 'pending',
       due_date,
+      issued_date,
       pay_token: generatePayToken(),
       pay_token_expires_at: payTokenExpiresAt(3),
     }).returning();
@@ -257,16 +259,22 @@ router.get('/invoices/:id', async (req, res) => {
   }
 });
 
-// PATCH /api/invoices/:id  — admin update pay_status (and sync order status)
+// PATCH /api/invoices/:id  — admin update pay_status and/or issued_date
 router.patch('/invoices/:id', requireLogin, async (req, res) => {
   try {
-    const { pay_status } = req.body;
+    const { pay_status, issued_date } = req.body;
     const VALID_STATUSES = ['pending', 'paid', 'failed', 'waived', 'voided', 'cancelled'];
 
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
 
     const updates = {};
+    if (issued_date !== undefined) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(issued_date)) {
+        return res.status(400).json({ error: 'INVALID_DATE', message: 'issued_date must be YYYY-MM-DD' });
+      }
+      updates.issued_date = issued_date;
+    }
     if (pay_status !== undefined) {
       if (!VALID_STATUSES.includes(pay_status)) {
         return res.status(400).json({ error: 'INVALID_STATUS', message: `pay_status must be one of: ${VALID_STATUSES.join(', ')}` });
