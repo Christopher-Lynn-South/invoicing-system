@@ -72,12 +72,15 @@ function htmlPage(title, body) {
 async function generateOrderNumber() {
   const year = new Date().getFullYear();
   const prefix = `SO-${year}-`;
-  const result = await db.execute(
-    sql`SELECT order_number FROM sales_orders WHERE order_number LIKE ${prefix + '%'} ORDER BY order_number DESC LIMIT 1`
-  );
+  const result = await db.execute(sql`
+    SELECT order_number FROM sales_orders
+    WHERE order_number LIKE ${prefix + '%'}
+    ORDER BY (regexp_replace(order_number, '.*-', '')::bigint) DESC
+    LIMIT 1
+  `);
   const rows = result.rows || result;
   return rows.length
-    ? `${prefix}${String(parseInt(rows[0].order_number.split('-')[2], 10) + 1).padStart(3, '0')}`
+    ? `${prefix}${String(parseInt(rows[0].order_number.split('-').pop(), 10) + 1).padStart(3, '0')}`
     : `${prefix}001`;
 }
 
@@ -209,31 +212,41 @@ router.post('/confirm/:token', async (req, res) => {
       .set({ ship_address })
       .where(eq(refill_requests.id, request.id));
 
-    // Create draft sales order
-    const order_number = await generateOrderNumber();
-    const [order] = await db.insert(sales_orders).values({
-      order_number,
-      patient_id: patient.id,
-      status: 'draft',
-      notes: `Refill confirmed by patient. Ship via FedEx Priority Overnight.\nRequested ship date: ${request.proposed_ship_date || 'TBD'}\nPlease review and send invoice.`,
-      shipping_quote: {
-        service_type: 'PRIORITY_OVERNIGHT',
-        package_type: 'YOUR_PACKAGING',
-        confirmed_address: ship_address,
-        proposed_ship_date: request.proposed_ship_date,
-      },
-      updated_at: new Date(),
-    }).returning();
-
-    // Add line item
+    // Atomic order + line-item create with retry on order_number collision
+    let order;
     const unit_price = parseFloat(product.unit_price);
-    await db.insert(order_items).values({
-      order_id: order.id,
-      product_id: product.id,
-      quantity: 1,
-      unit_price: unit_price.toFixed(2),
-      line_total: unit_price.toFixed(2),
-    });
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const order_number = await generateOrderNumber();
+      try {
+        await db.transaction(async (tx) => {
+          [order] = await tx.insert(sales_orders).values({
+            order_number,
+            patient_id: patient.id,
+            status: 'draft',
+            notes: `Refill confirmed by patient. Ship via FedEx Priority Overnight.\nRequested ship date: ${request.proposed_ship_date || 'TBD'}\nPlease review and send invoice.`,
+            shipping_quote: {
+              service_type: 'PRIORITY_OVERNIGHT',
+              package_type: 'YOUR_PACKAGING',
+              confirmed_address: ship_address,
+              proposed_ship_date: request.proposed_ship_date,
+            },
+            updated_at: new Date(),
+          }).returning();
+
+          await tx.insert(order_items).values({
+            order_id: order.id,
+            product_id: product.id,
+            quantity: 1,
+            unit_price: unit_price.toFixed(2),
+            line_total: unit_price.toFixed(2),
+          });
+        });
+        break;
+      } catch (err) {
+        if (err.code !== '23505' || attempt === 4) throw err;
+        await new Promise(r => setTimeout(r, 10 + Math.random() * 40));
+      }
+    }
 
     // Mark request confirmed
     await db.update(refill_requests)
