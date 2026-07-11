@@ -24,6 +24,8 @@ const patients = pgTable('patients', {
   shipping_address: jsonb('shipping_address'),
   usdc_wallet: text('usdc_wallet'),
   stripe_customer_id: text('stripe_customer_id'),
+  stripe_default_pm: text('stripe_default_pm'),
+  credit_balance: numeric('credit_balance', { precision: 10, scale: 2 }).notNull().default('0'),
   requires_prescription: boolean('requires_prescription').default(false),
   active_prescription_id: uuid('active_prescription_id'),
   password_hash: text('password_hash'),
@@ -103,8 +105,36 @@ const invoices = pgTable('invoices', {
   sent_at: timestamp('sent_at', { withTimezone: true }),
   pay_token: text('pay_token').unique(),
   pay_token_expires_at: timestamp('pay_token_expires_at', { withTimezone: true }),
+  viewed_at: timestamp('viewed_at', { withTimezone: true }),
+  nudge_sent_at: timestamp('nudge_sent_at', { withTimezone: true }),
+  credit_applied: numeric('credit_applied', { precision: 10, scale: 2 }).notNull().default('0'),
+  amount_paid: numeric('amount_paid', { precision: 10, scale: 2 }).notNull().default('0'),
+  installments_allowed: boolean('installments_allowed').notNull().default(false),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
   deleted_at: timestamp('deleted_at', { withTimezone: true }),
+});
+
+// ─── invoice_payments (installments / partial charges) ────────────────────────
+const invoice_payments = pgTable('invoice_payments', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  invoice_id: uuid('invoice_id').notNull().references(() => invoices.id),
+  amount: numeric('amount', { precision: 10, scale: 2 }).notNull(),
+  method: text('method'),
+  stripe_payment_intent_id: text('stripe_payment_intent_id'),
+  status: text('status').notNull().default('pending'),
+  paid_at: timestamp('paid_at', { withTimezone: true }),
+  created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
+});
+
+// ─── credit_ledger (store credit; positive = granted, negative = spent) ───────
+const credit_ledger = pgTable('credit_ledger', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  patient_id: uuid('patient_id').notNull().references(() => patients.id),
+  amount: numeric('amount', { precision: 10, scale: 2 }).notNull(),
+  reason: text('reason'),
+  invoice_id: uuid('invoice_id').references(() => invoices.id),
+  created_by: uuid('created_by'),
+  created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
 // ─── shipments ────────────────────────────────────────────────────────────────
@@ -124,6 +154,7 @@ const shipments = pgTable('shipments', {
   latest_status: text('latest_status'),
   exception_flag: boolean('exception_flag').default(false),
   raw_import_id: text('raw_import_id'),
+  delivered_at: date('delivered_at'),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
@@ -156,6 +187,11 @@ const reminder_rules = pgTable('reminder_rules', {
   last_reminded_at: timestamp('last_reminded_at', { withTimezone: true }),
   last_order_id: uuid('last_order_id').references(() => sales_orders.id),
   active: boolean('active').default(true),
+  snooze_until: date('snooze_until'),
+  channel_pref: text('channel_pref').notNull().default('email'), // email | sms | both
+  autopay: boolean('autopay').notNull().default(false),
+  autopay_notice_sent_at: timestamp('autopay_notice_sent_at', { withTimezone: true }),
+  escalated_at: timestamp('escalated_at', { withTimezone: true }),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
@@ -252,6 +288,8 @@ module.exports = {
   sales_orders,
   order_items,
   invoices,
+  invoice_payments,
+  credit_ledger,
   shipments,
   shipment_events,
   reminder_rules,

@@ -9,6 +9,7 @@ const { eq, sql } = require('drizzle-orm');
 const {
   sendRefillConfirmedAdminNotification,
 } = require('../services/mailer');
+const { createInvoiceForOrder, hasActivePrescription } = require('../services/invoicing');
 
 // Server-side address validation. FedEx rejects malformed states/zips so we
 // need to catch bad input before we store it.
@@ -323,6 +324,21 @@ router.post('/confirm/:token', async (req, res) => {
       .set({ last_order_id: order.id, last_reminded_at: new Date() })
       .where(eq(reminder_rules.id, request.rule_id));
 
+    // Auto-invoice: when the patient has a valid prescription on file (or the
+    // patient doesn't require one), skip the manual staff-review step and send
+    // the invoice immediately. Staff still get the confirmation email and see
+    // the order as pending_payment.
+    let autoInvoiced = false;
+    try {
+      const rxOk = !patient.requires_prescription || await hasActivePrescription(patient.id);
+      if (rxOk) {
+        await createInvoiceForOrder(order, { notify: true });
+        autoInvoiced = true;
+      }
+    } catch (invErr) {
+      console.error('Refill auto-invoice failed (staff will invoice manually):', invErr.message);
+    }
+
     // Notify admin (non-fatal)
     try {
       await sendRefillConfirmedAdminNotification(patient, product, order, ship_address);
@@ -346,7 +362,10 @@ router.post('/confirm/:token', async (req, res) => {
       <hr class="divider">
       <h2>Shipping to</h2>
       <div class="addr-box">${addrLines}</div>
-      <p style="margin-top:12px">Our team will review your order and send an invoice to <strong>${esc(patient.email)}</strong> shortly.</p>
+      <p style="margin-top:12px">${autoInvoiced
+        ? `Your invoice is on its way to <strong>${esc(patient.email)}</strong> — check your inbox to complete payment.`
+        : `Our team will review your order and send an invoice to <strong>${esc(patient.email)}</strong> shortly.`
+      }</p>
       <p style="margin-top:8px;font-size:12px;color:#9ca3af">Order ${esc(order.order_number)}</p>
     `));
 

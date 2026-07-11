@@ -1,6 +1,6 @@
 const express = require('express');
 const { db } = require('../db');
-const { patients, sales_orders, prescriptions, patient_contacts, patient_shipping_addresses } = require('../db/schema');
+const { patients, sales_orders, prescriptions, patient_contacts, patient_shipping_addresses, credit_ledger } = require('../db/schema');
 const { eq, desc, and, isNull, inArray } = require('drizzle-orm');
 const { requireLogin } = require('../middleware/auth');
 const { validate, patientSchema, prescriptionSchema, contactSchema } = require('../middleware/validate');
@@ -532,6 +532,64 @@ router.post('/:id/shipping-addresses/:addrId/set-default', requireLogin, async (
 
     return res.json(updated);
   } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── Store credit ─────────────────────────────────────────────────────────────
+
+// GET /api/patients/:id/credits — balance + ledger history
+router.get('/:id/credits', requireLogin, async (req, res) => {
+  try {
+    const [patient] = await db.select({ credit_balance: patients.credit_balance })
+      .from(patients).where(eq(patients.id, req.params.id)).limit(1);
+    if (!patient) return res.status(404).json({ error: 'NOT_FOUND' });
+    const ledger = await db.select().from(credit_ledger)
+      .where(eq(credit_ledger.patient_id, req.params.id))
+      .orderBy(desc(credit_ledger.created_at))
+      .limit(100);
+    return res.json({ balance: patient.credit_balance, ledger });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// POST /api/patients/:id/credits — grant (positive) or deduct (negative) credit
+router.post('/:id/credits', requireLogin, async (req, res) => {
+  try {
+    const amount = parseFloat(req.body.amount);
+    const reason = (req.body.reason || '').trim();
+    if (!Number.isFinite(amount) || amount === 0 || Math.abs(amount) > 100000) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'amount must be a non-zero number.' });
+    }
+    if (!reason) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'reason is required.' });
+    }
+
+    let newBalance;
+    await db.transaction(async (tx) => {
+      const [patient] = await tx.select().from(patients).where(eq(patients.id, req.params.id)).limit(1);
+      if (!patient) throw Object.assign(new Error('NOT_FOUND'), { status: 404 });
+      const balance = parseFloat(patient.credit_balance || 0);
+      newBalance = Math.round((balance + amount) * 100) / 100;
+      if (newBalance < 0) throw Object.assign(new Error('Balance cannot go negative.'), { status: 400 });
+
+      await tx.update(patients)
+        .set({ credit_balance: newBalance.toFixed(2), updated_at: new Date() })
+        .where(eq(patients.id, req.params.id));
+      await tx.insert(credit_ledger).values({
+        patient_id: req.params.id,
+        amount: amount.toFixed(2),
+        reason,
+        created_by: req.session.adminId,
+      });
+    });
+
+    return res.json({ ok: true, balance: newBalance.toFixed(2) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: 'ERROR', message: err.message });
     console.error(err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
   }

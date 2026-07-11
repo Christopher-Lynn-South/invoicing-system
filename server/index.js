@@ -36,6 +36,8 @@ app.use(helmet({ contentSecurityPolicy: false }));
 
 // ─── Stripe webhook needs raw body BEFORE json parser ────────────────────────
 app.use('/api/webhooks/stripe', require('./routes/stripe-webhook'));
+// Twilio inbound SMS (form-encoded, signature-verified)
+app.use('/api/webhooks/twilio-sms', require('./routes/twilio-webhook'));
 
 // ─── Body parsers ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '5mb' }));

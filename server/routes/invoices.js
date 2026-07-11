@@ -7,6 +7,7 @@ const { requireLogin } = require('../middleware/auth');
 const { generateInvoicePDF } = require('../services/pdf');
 const { sendInvoiceEmail } = require('../services/mailer');
 const { sendInvoiceSMS } = require('../services/sms');
+const { createInvoiceForOrder } = require('../services/invoicing');
 const path = require('path');
 const fs = require('fs');
 
@@ -55,87 +56,11 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
       return res.status(400).json({ error: 'INVALID_STATUS', message: 'Order must be draft or pending_payment.' });
     }
 
-    // Check for existing non-deleted invoice
-    const [existing] = await db.select().from(invoices)
-      .where(and(eq(invoices.order_id, order.id), isNull(invoices.deleted_at)));
-    if (existing) return res.json(existing);
-
-    const items = await db.select({
-      item: order_items,
-      product_name: products.name,
-      product_sku: products.sku,
-    })
-      .from(order_items)
-      .leftJoin(products, eq(order_items.product_id, products.id))
-      .where(eq(order_items.order_id, order.id));
-
-    const baseSubtotal = items.reduce((sum, r) => sum + parseFloat(r.item.line_total), 0);
-    // Always gross up by 3.9% — this is the CC price baked into line items
-    const subtotal = Math.round(baseSubtotal * 1.039 * 100) / 100;
-    const shipping_charge = order.shipping_quote?.net_charge ? parseFloat(order.shipping_quote.net_charge) : 0;
-    const due_date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-    // Atomic invoice-create + order-status-update — a failed status update
-    // used to leave the order stuck in 'draft' with an invoice that could
-    // not be paid. Retry the transaction on invoice_number collision.
-    let invoice;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const invoice_number = await generateInvoiceNumber();
-      try {
-        await db.transaction(async (tx) => {
-          [invoice] = await tx.insert(invoices).values({
-            invoice_number,
-            order_id: order.id,
-            subtotal: subtotal.toFixed(2),
-            shipping_charge: shipping_charge.toFixed(2),
-            processing_fee: '0.00',
-            total: (subtotal + shipping_charge).toFixed(2),
-            pay_status: 'pending',
-            due_date,
-            pay_token: generatePayToken(),
-            pay_token_expires_at: payTokenExpiresAt(3),
-          }).returning();
-
-          await tx.update(sales_orders)
-            .set({ status: 'pending_payment', updated_at: new Date() })
-            .where(eq(sales_orders.id, order.id));
-        });
-        break;
-      } catch (err) {
-        if (err.code !== '23505' || attempt === 4) throw err;
-        await new Promise(r => setTimeout(r, 10 + Math.random() * 40));
-      }
-    }
-
-    // Generate PDF
-    const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
-    const invoicesDir = path.join(__dirname, '../../uploads/invoices');
-    fs.mkdirSync(invoicesDir, { recursive: true });
-    const pdfPath = path.join(invoicesDir, `${invoice.id}.pdf`);
-    await generateInvoicePDF({
-      invoice: { ...invoice, shipping_service: order.shipping_quote?.service_type || null },
-      order,
-      patient,
-      items: items.map(r => ({ ...r.item, product_name: r.product_name })),
-    }, pdfPath);
-
-    const pdf_url = `/uploads/invoices/${invoice.id}.pdf`;
-    const [updated] = await db.update(invoices)
-      .set({ pdf_url, sent_at: new Date() })
-      .where(eq(invoices.id, invoice.id))
-      .returning();
-
-    // Send email
-    try {
-      await sendInvoiceEmail(patient, order, updated);
-    } catch (mailErr) {
-      console.error('Invoice email failed:', mailErr.message);
-    }
-
-    return res.status(201).json(updated);
+    const { invoice, created } = await createInvoiceForOrder(order, { notify: true });
+    return res.status(created ? 201 : 200).json(invoice);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+    return res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });
 
@@ -178,6 +103,11 @@ router.get('/invoices/by-token/:token', async (req, res) => {
 
     if (!invoice.pay_token_expires_at || new Date() > new Date(invoice.pay_token_expires_at)) {
       return res.status(410).json({ error: 'LINK_EXPIRED', message: 'This payment link has expired. Please contact us to receive a new one.' });
+    }
+
+    // Track first view — powers the abandoned-checkout nudge
+    if (!invoice.viewed_at && invoice.pay_status === 'pending') {
+      await db.update(invoices).set({ viewed_at: new Date() }).where(eq(invoices.id, invoice.id));
     }
 
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
@@ -281,6 +211,11 @@ router.get('/invoices/:id', async (req, res) => {
       return res.status(404).json({ error: 'NOT_FOUND' });
     }
 
+    // Track first customer view (token/legacy = the patient opened their pay link)
+    if ((lvl === 'token' || lvl === 'legacy') && !invoice.viewed_at && invoice.pay_status === 'pending') {
+      await db.update(invoices).set({ viewed_at: new Date() }).where(eq(invoices.id, invoice.id));
+    }
+
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
     const items = await db.select({
       item: order_items,
@@ -322,6 +257,9 @@ router.patch('/invoices/:id', requireLogin, async (req, res) => {
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
 
     const updates = {};
+    if (typeof req.body.installments_allowed === 'boolean') {
+      updates.installments_allowed = req.body.installments_allowed;
+    }
     if (pay_status !== undefined) {
       if (!VALID_STATUSES.includes(pay_status)) {
         return res.status(400).json({ error: 'INVALID_STATUS', message: `pay_status must be one of: ${VALID_STATUSES.join(', ')}` });
@@ -342,6 +280,10 @@ router.patch('/invoices/:id', requireLogin, async (req, res) => {
       if (pay_status === 'paid' && !invoice.paid_at) {
         updates.paid_at = new Date();
       }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'No valid fields to update.' });
     }
 
     const [updated] = await db.update(invoices)

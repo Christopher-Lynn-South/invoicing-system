@@ -83,4 +83,48 @@ async function sendCustomSMS(patient, order, message) {
   }
 }
 
-module.exports = { sendInvoiceSMS, sendShippingSMS, sendCustomSMS };
+// Refill reminder — patient can reply YES to confirm, or use the link
+async function sendReminderSMS(patient, product, rule) {
+  if (!patient.phone) return false;
+  const url = `${getBaseUrl()}/reorder/${rule.id}`;
+  const body = `${getCompanyName()}: Time to refill ${product.name}. Reply YES to reorder, or tap: ${url}`;
+  try {
+    return await sendSMS(patient.phone, body);
+  } catch (err) {
+    console.error('Reminder SMS failed:', err.message);
+    return false;
+  }
+}
+
+// Autopay heads-up — sent 3 days before the automatic charge
+async function sendAutopayNoticeSMS(patient, product, chargeDateStr) {
+  if (!patient.phone) return false;
+  const body = `${getCompanyName()}: Your ${product.name} refill will be charged automatically on ${chargeDateStr} and shipped to you. Reply SKIP to skip this refill, or manage it at ${getBaseUrl()}/customer/portal`;
+  try {
+    return await sendSMS(patient.phone, body);
+  } catch (err) {
+    console.error('Autopay notice SMS failed:', err.message);
+    return false;
+  }
+}
+
+// Abandoned checkout nudge
+async function sendNudgeSMS(patient, invoice) {
+  if (!patient.phone) return false;
+  const payUrl = invoice.pay_token
+    ? `${getBaseUrl()}/pay/t/${invoice.pay_token}`
+    : `${getBaseUrl()}/pay/${invoice.id}`;
+  const body = `${getCompanyName()}: Your invoice ${invoice.invoice_number} ($${parseFloat(invoice.total).toFixed(2)}) is still waiting. Complete payment: ${payUrl}`;
+  try {
+    return await sendSMS(patient.phone, body);
+  } catch (err) {
+    console.error('Nudge SMS failed:', err.message);
+    return false;
+  }
+}
+
+module.exports = {
+  sendSMS, toE164,
+  sendInvoiceSMS, sendShippingSMS, sendCustomSMS,
+  sendReminderSMS, sendAutopayNoticeSMS, sendNudgeSMS,
+};

@@ -309,6 +309,9 @@ router.get('/refills', async (req, res) => {
         last_fill_date: reminder_rules.last_fill_date,
         last_reminded_at: reminder_rules.last_reminded_at,
         active: reminder_rules.active,
+        snooze_until: reminder_rules.snooze_until,
+        channel_pref: reminder_rules.channel_pref,
+        autopay: reminder_rules.autopay,
         created_at: reminder_rules.created_at,
         product_name: products.name,
         product_sku: products.sku,
@@ -316,6 +319,11 @@ router.get('/refills', async (req, res) => {
       .from(reminder_rules)
       .leftJoin(products, eq(reminder_rules.product_id, products.id))
       .where(eq(reminder_rules.patient_id, req.session.customerId));
+
+    // Does this patient have a saved card (needed for autopay opt-in)?
+    const [me] = await db.select({ stripe_default_pm: patients.stripe_default_pm })
+      .from(patients).where(eq(patients.id, req.session.customerId)).limit(1);
+    const has_saved_card = !!me?.stripe_default_pm;
 
     // Attach latest refill request per rule
     const enriched = await Promise.all(rules.map(async rule => {
@@ -331,12 +339,97 @@ router.get('/refills', async (req, res) => {
         .where(eq(refill_requests.rule_id, rule.id))
         .orderBy(desc(refill_requests.created_at))
         .limit(1);
-      return { ...rule, latest_request: latest || null };
+      return { ...rule, latest_request: latest || null, has_saved_card };
     }));
 
     return res.json(enriched);
   } catch (err) {
     console.error('Customer refills error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── PATCH /api/customer/refills/:ruleId/snooze  { days: 7|14|30 } ────────────
+router.patch('/refills/:ruleId/snooze', async (req, res) => {
+  try {
+    const days = parseInt(req.body.days, 10);
+    if (![7, 14, 30, 0].includes(days)) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'days must be 7, 14, 30, or 0 to clear.' });
+    }
+    const [rule] = await db.select().from(reminder_rules)
+      .where(eq(reminder_rules.id, req.params.ruleId)).limit(1);
+    if (!rule || rule.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+    const snooze_until = days === 0 ? null
+      : new Date(Date.now() + days * 86400000).toISOString().split('T')[0];
+    const [updated] = await db.update(reminder_rules)
+      .set({ snooze_until })
+      .where(eq(reminder_rules.id, rule.id))
+      .returning();
+    return res.json({ ok: true, snooze_until: updated.snooze_until });
+  } catch (err) {
+    console.error('Customer snooze error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── PATCH /api/customer/refills/:ruleId/channel  { channel } ─────────────────
+router.patch('/refills/:ruleId/channel', async (req, res) => {
+  try {
+    const channel = req.body.channel;
+    if (!['email', 'sms', 'both'].includes(channel)) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'channel must be email, sms, or both.' });
+    }
+    const [rule] = await db.select().from(reminder_rules)
+      .where(eq(reminder_rules.id, req.params.ruleId)).limit(1);
+    if (!rule || rule.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+    if (channel !== 'email') {
+      const [me] = await db.select({ phone: patients.phone })
+        .from(patients).where(eq(patients.id, req.session.customerId)).limit(1);
+      if (!me?.phone) {
+        return res.status(400).json({ error: 'NO_PHONE', message: 'Add a phone number to your account to receive SMS reminders.' });
+      }
+    }
+    const [updated] = await db.update(reminder_rules)
+      .set({ channel_pref: channel })
+      .where(eq(reminder_rules.id, rule.id))
+      .returning();
+    return res.json({ ok: true, channel_pref: updated.channel_pref });
+  } catch (err) {
+    console.error('Customer channel error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+});
+
+// ─── PATCH /api/customer/refills/:ruleId/autopay  { enabled } ─────────────────
+router.patch('/refills/:ruleId/autopay', async (req, res) => {
+  try {
+    const enabled = req.body.enabled === true;
+    const [rule] = await db.select().from(reminder_rules)
+      .where(eq(reminder_rules.id, req.params.ruleId)).limit(1);
+    if (!rule || rule.patient_id !== req.session.customerId) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+    if (enabled) {
+      const [me] = await db.select({ stripe_default_pm: patients.stripe_default_pm })
+        .from(patients).where(eq(patients.id, req.session.customerId)).limit(1);
+      if (!me?.stripe_default_pm) {
+        return res.status(400).json({
+          error: 'NO_SAVED_CARD',
+          message: 'Pay an invoice by card first — we\'ll securely save it, then you can turn on autopay.',
+        });
+      }
+    }
+    const [updated] = await db.update(reminder_rules)
+      .set({ autopay: enabled })
+      .where(eq(reminder_rules.id, rule.id))
+      .returning();
+    return res.json({ ok: true, autopay: updated.autopay });
+  } catch (err) {
+    console.error('Customer autopay error:', err);
     return res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });

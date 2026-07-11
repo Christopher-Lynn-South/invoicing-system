@@ -104,6 +104,10 @@ async function pollShipment(shipment) {
     if (stopPolling) updateData.polling_active = false;
     if (setException) updateData.exception_flag = true;
     if (newStatus) updateData.status = newStatus;
+    // Record actual delivery date — refill countdowns start from this
+    if (newStatus === 'delivered' && !shipment.delivered_at) {
+      updateData.delivered_at = new Date().toISOString().split('T')[0];
+    }
 
     await db.update(shipments).set(updateData).where(eq(shipments.id, shipment.id));
   } catch (err) {
