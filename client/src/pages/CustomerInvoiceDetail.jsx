@@ -46,11 +46,15 @@ export default function CustomerInvoiceDetail() {
   const [noteMsg, setNoteMsg] = useState('');
 
   async function load() {
+    setLoading(true); setError('');
     try {
       const res = await api.get(`/customer/invoices/${id}`);
       setInvoice(res.data);
     } catch (err) {
-      setError(err.response?.status === 403 ? 'You do not have access to this invoice.' : 'Invoice not found.');
+      if (err.response?.status === 401) { window.location.href = '/login'; return; }
+      if (err.response?.status === 403) setError('You do not have access to this invoice.');
+      else if (err.response?.status === 404) setError('Invoice not found.');
+      else setError('Could not load this invoice. Please try again.');
     }
     setLoading(false);
   }
@@ -81,7 +85,16 @@ export default function CustomerInvoiceDetail() {
     <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)' }}>
       <div style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 16 }}>{error}</div>
-        <Link to="/customer/portal" style={{ color: 'var(--accent)', fontSize: 13 }}>← Back to portal</Link>
+        <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+          <button onClick={load} style={{
+            background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8,
+            padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}>Retry</button>
+          <Link to="/customer/portal" style={{
+            display: 'inline-block', textDecoration: 'none', color: 'var(--text-secondary)',
+            border: '1px solid var(--border)', borderRadius: 8, padding: '8px 20px', fontSize: 13,
+          }}>← Back to portal</Link>
+        </div>
       </div>
     </div>
   );

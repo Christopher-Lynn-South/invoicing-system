@@ -1,4 +1,5 @@
 const express = require('express');
+const { z } = require('zod');
 const { db } = require('../db');
 const {
   refill_requests, reminder_rules, patients, products,
@@ -8,6 +9,17 @@ const { eq, sql } = require('drizzle-orm');
 const {
   sendRefillConfirmedAdminNotification,
 } = require('../services/mailer');
+
+// Server-side address validation. FedEx rejects malformed states/zips so we
+// need to catch bad input before we store it.
+const refillAddrSchema = z.object({
+  street:  z.string().trim().min(3, 'Street is required.').max(200),
+  street2: z.string().trim().max(200).optional(),
+  city:    z.string().trim().min(1, 'City is required.').max(100),
+  state:   z.string().trim().length(2, 'Use the 2-letter state code (e.g. CA).').transform(v => v.toUpperCase()),
+  zip:     z.string().trim().regex(/^\d{5}(-\d{4})?$/, 'ZIP must be 5 digits or 5+4.'),
+  country: z.string().trim().max(3).default('US').transform(v => (v || 'US').toUpperCase()),
+});
 
 const router = express.Router();
 
@@ -197,14 +209,67 @@ router.post('/confirm/:token', async (req, res) => {
     const [patient] = await db.select().from(patients).where(eq(patients.id, request.patient_id));
     const [product] = await db.select().from(products).where(eq(products.id, request.product_id));
 
-    // Build confirmed address from form submission
+    // Server-side validate the form. On failure, re-render the confirm page
+    // with the offending field messages so the customer can fix + retry.
+    const parsed = refillAddrSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const errs = {};
+      for (const issue of parsed.error.issues) {
+        const field = issue.path[0];
+        if (field && !errs[field]) errs[field] = issue.message;
+      }
+      const addr = {
+        street:  req.body.street  || '',
+        street2: req.body.street2 || '',
+        city:    req.body.city    || '',
+        state:   req.body.state   || '',
+        zip:     req.body.zip     || '',
+      };
+      const errBar = (field) => errs[field]
+        ? `<div style="font-size:12px;color:#dc2626;margin:-8px 0 8px">${esc(errs[field])}</div>`
+        : '';
+      return res.status(400).send(htmlPage('Please fix a few fields', `
+        <div class="center">
+          <div class="icon">✍️</div>
+          <h1>Please fix a few fields</h1>
+          <p>Hi ${esc(patient.name)}, your <strong>${esc(product.name)}</strong> refill address needs some corrections.</p>
+        </div>
+        <form method="POST" action="/refill/confirm/${esc(token)}">
+          <h2>Shipping Address</h2>
+          <label>Street Address</label>
+          <input type="text" name="street" value="${esc(addr.street)}" required placeholder="123 Main St" />
+          ${errBar('street')}
+          <label>Apt / Suite / Unit <span style="font-weight:400;text-transform:none">(optional)</span></label>
+          <input type="text" name="street2" value="${esc(addr.street2)}" placeholder="Apt 4B" />
+          <div class="row3">
+            <div><label>City</label>
+              <input type="text" name="city" value="${esc(addr.city)}" required placeholder="City" />
+              ${errBar('city')}
+            </div>
+            <div><label>State</label>
+              <input type="text" name="state" value="${esc(addr.state)}" required placeholder="CA" maxlength="2" />
+              ${errBar('state')}
+            </div>
+            <div><label>ZIP</label>
+              <input type="text" name="zip" value="${esc(addr.zip)}" required placeholder="90210" maxlength="10" />
+              ${errBar('zip')}
+            </div>
+          </div>
+          <label>Country</label>
+          <input type="text" name="country" value="US" required placeholder="US" maxlength="3" />
+          <button type="submit" class="btn-confirm">✓ Confirm Refill &amp; Address</button>
+        </form>
+      `));
+    }
+
+    // Build confirmed address from validated data
     const ship_address = {
-      street: (req.body.street || '').trim(),
-      street2: (req.body.street2 || '').trim() || undefined,
-      city: (req.body.city || '').trim(),
-      state: (req.body.state || '').trim().toUpperCase(),
-      zip: (req.body.zip || '').trim(),
-      country: (req.body.country || 'US').trim().toUpperCase(),
+      street:  parsed.data.street,
+      street2: parsed.data.street2 || undefined,
+      city:    parsed.data.city,
+      state:   parsed.data.state,
+      zip:     parsed.data.zip,
+      country: parsed.data.country,
     };
 
     // Save confirmed address back to request

@@ -311,13 +311,19 @@ export default function PatientPortal() {
     }
   }
 
+  const [pauseError, setPauseError] = useState({}); // { [ruleId]: message }
+
   async function handleTogglePause(rule) {
     setPauseLoading(s => ({ ...s, [rule.id]: true }));
+    setPauseError(s => ({ ...s, [rule.id]: '' }));
     try {
       const { data } = await api.patch(`/customer/refills/${rule.id}/pause`);
       setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, active: data.active } : r));
-    } catch {
-      // silently revert — the UI will remain unchanged since we didn't optimistically update
+    } catch (err) {
+      setPauseError(s => ({
+        ...s,
+        [rule.id]: err.response?.data?.message || 'Could not update reminder. Please try again.',
+      }));
     } finally {
       setPauseLoading(s => ({ ...s, [rule.id]: false }));
     }
@@ -635,6 +641,11 @@ export default function PatientPortal() {
                           >
                             {pauseLoading[rule.id] ? '…' : rule.active ? 'Pause Reminders' : 'Resume Reminders'}
                           </button>
+                          {pauseError[rule.id] && (
+                            <div style={{ fontSize: 11, color: 'var(--danger)', maxWidth: 200, textAlign: 'right', lineHeight: 1.4 }}>
+                              {pauseError[rule.id]}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
