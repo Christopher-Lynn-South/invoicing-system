@@ -291,11 +291,11 @@ async function sendWhatsApp(patient, product, rule) {
   }
 }
 
-// Schedule: reminders 08:00 daily (Mexico City); nudges hourly
+// Schedule: reminders 09:00 daily (Pacific); nudges hourly
 function start() {
-  cron.schedule('0 8 * * *', runReminderJob, { timezone: 'America/Mexico_City' });
+  cron.schedule('0 9 * * *', runReminderJob, { timezone: 'America/Los_Angeles' });
   cron.schedule('15 * * * *', runNudgeJob);
-  console.log('[Reminders] Cron scheduled: 08:00 daily (Mexico City); nudges hourly at :15');
+  console.log('[Reminders] Cron scheduled: 09:00 daily (Pacific); nudges hourly at :15');
 }
 
 module.exports = { start, runReminderJob, runNudgeJob, runRxExpiryCheck };
