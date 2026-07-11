@@ -53,6 +53,9 @@ router.post('/purge', requireRole('admin'), async (req, res) => {
 
     const deleted = {};
     const wipe = async (table) => {
+      // Skip tables whose migration hasn't been applied yet
+      const exists = await pool.query(`SELECT to_regclass($1) AS t`, [`public.${table}`]);
+      if (!exists.rows[0]?.t) { deleted[table] = 'skipped (table missing)'; return; }
       const r = await pool.query(`DELETE FROM ${table}`);
       deleted[table] = r.rowCount || 0;
     };
