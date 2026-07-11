@@ -1,0 +1,974 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import useOrderStore from '../store/useOrderStore';
+import api from '../lib/api';
+
+const STATUS_COLOR = {
+  paid: 'var(--success)',
+  pending: 'var(--warning)',
+  failed: 'var(--danger)',
+};
+
+function fmt(val) {
+  return `$${Number(val).toFixed(2)}`;
+}
+
+function Badge({ label, color }) {
+  return (
+    <span style={{
+      fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1,
+      color, background: color + '22', padding: '2px 8px', borderRadius: 20,
+    }}>{label}</span>
+  );
+}
+
+// Calculate next due date from dosage fields (7-day early warning)
+function calcNextDue(rule) {
+  if (!rule.last_fill_date || !rule.dosage_mg || !rule.last_fill_qty_mg) return null;
+  const perDay = parseFloat(rule.dosage_mg) * parseFloat(rule.doses_per_freq || 1)
+    * (rule.dosage_freq === 'weekly' ? 1 / 7 : 1);
+  if (perDay <= 0) return null;
+  const daysSupply = Math.floor(parseFloat(rule.last_fill_qty_mg) / perDay);
+  const d = new Date(rule.last_fill_date);
+  d.setDate(d.getDate() + daysSupply - 7);
+  return d.toISOString().split('T')[0];
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+const TABS = [
+  { key: 'invoices',      label: 'Invoices' },
+  { key: 'shipments',     label: 'Shipments' },
+  { key: 'prescriptions', label: 'Prescriptions' },
+  { key: 'refills',       label: 'Refills' },
+  { key: 'addresses',     label: 'Addresses' },
+  { key: 'account',       label: 'Account' },
+];
+
+// ── Reusable address form fields ──────────────────────────────────────────────
+const EMPTY_ADDR = { label: '', street: '', street2: '', city: '', state: '', zip: '' };
+
+function AddrFields({ form, setForm, showLabel = false }) {
+  return (
+    <>
+      {showLabel && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>Label (e.g. Home, Office)</label>
+          <input value={form.label || ''} onChange={e => setForm(f => ({ ...f, label: e.target.value }))}
+            placeholder="Home" style={{ width: '100%' }} />
+        </div>
+      )}
+      <div style={{ marginBottom: 12 }}>
+        <label style={labelStyle}>Street Address</label>
+        <input value={form.street || ''} onChange={e => setForm(f => ({ ...f, street: e.target.value }))}
+          placeholder="123 Main St" style={{ width: '100%' }} required />
+      </div>
+      <div style={{ marginBottom: 12 }}>
+        <label style={labelStyle}>Apt / Suite / Unit (optional)</label>
+        <input value={form.street2 || ''} onChange={e => setForm(f => ({ ...f, street2: e.target.value }))}
+          placeholder="Apt 4B" style={{ width: '100%' }} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 100px', gap: 10, marginBottom: 12 }}>
+        <div>
+          <label style={labelStyle}>City</label>
+          <input value={form.city || ''} onChange={e => setForm(f => ({ ...f, city: e.target.value }))}
+            placeholder="Austin" style={{ width: '100%' }} required />
+        </div>
+        <div>
+          <label style={labelStyle}>State</label>
+          <input value={form.state || ''} onChange={e => setForm(f => ({ ...f, state: e.target.value.toUpperCase() }))}
+            placeholder="TX" maxLength={2} style={{ width: '100%' }} required />
+        </div>
+        <div>
+          <label style={labelStyle}>ZIP</label>
+          <input value={form.zip || ''} onChange={e => setForm(f => ({ ...f, zip: e.target.value }))}
+            placeholder="78701" style={{ width: '100%' }} required />
+        </div>
+      </div>
+    </>
+  );
+}
+
+const labelStyle = { display: 'block', fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 };
+const cardStyle  = { background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 18px' };
+
+export default function PatientPortal() {
+  const navigate = useNavigate();
+  const patientUser = useOrderStore(s => s.patientUser);
+  const setPatientUser = useOrderStore(s => s.setPatientUser);
+
+  const [invoices, setInvoices] = useState([]);
+  const [shipments, setShipments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [tab, setTab] = useState('invoices');
+
+  // Prescriptions
+  const [rxList, setRxList] = useState(null);
+  const [rxLoading, setRxLoading] = useState(false);
+  const [rxError, setRxError] = useState('');
+
+  // Refills
+  const [refills, setRefills] = useState(null);
+  const [refillsLoading, setRefillsLoading] = useState(false);
+  const [refillsError, setRefillsError] = useState('');
+  // Per-rule request state: { [ruleId]: 'idle' | 'loading' | 'sent' | 'error' }
+  const [requestState, setRequestState] = useState({});
+  // Per-rule pause state: optimistic active value
+  const [pauseLoading, setPauseLoading] = useState({});
+
+  // Addresses tab
+  const [billing, setBilling]           = useState(null);    // current saved billing addr
+  const [billingForm, setBillingForm]   = useState({});
+  const [billingEditing, setBillingEditing] = useState(false);
+  const [billingSaving, setBillingSaving]   = useState(false);
+  const [billingMsg, setBillingMsg]     = useState('');
+
+  const [shipAddrs, setShipAddrs]       = useState(null);    // null = not yet loaded
+  const [shipAddrsLoading, setShipAddrsLoading] = useState(false);
+  const [shipEditId, setShipEditId]     = useState(null);    // null | 'new' | uuid
+  const [shipForm, setShipForm]         = useState({ ...EMPTY_ADDR });
+  const [shipSaving, setShipSaving]               = useState(false);
+  const [shipDefaultSaving, setShipDefaultSaving] = useState(false);
+  const [shipMsg, setShipMsg]                     = useState('');
+  const [deleteConfirmId, setDeleteConfirmId]     = useState(null);
+  const [addrError, setAddrError]                 = useState('');
+
+  // Change password
+  const [cpCurrent, setCpCurrent] = useState('');
+  const [cpNew, setCpNew] = useState('');
+  const [cpMsg, setCpMsg] = useState('');
+  const [cpError, setCpError] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true); setLoadError('');
+    Promise.all([
+      api.get('/customer/invoices'),
+      api.get('/customer/shipments'),
+    ]).then(([inv, ship]) => {
+      setInvoices(inv.data);
+      setShipments(ship.data);
+    }).catch(err => {
+      if (err.response?.status === 401) {
+        // Session expired — send them back to login
+        window.location.href = '/login';
+        return;
+      }
+      setLoadError('We couldn\'t load your account right now. Please try again in a moment.');
+    }).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Lazy-load prescriptions when tab first opened
+  useEffect(() => {
+    if (tab === 'prescriptions' && rxList === null && !rxLoading) {
+      setRxLoading(true); setRxError('');
+      api.get('/customer/prescriptions')
+        .then(r => setRxList(r.data))
+        .catch(() => setRxError('Could not load prescriptions. Please try again.'))
+        .finally(() => setRxLoading(false));
+    }
+  }, [tab, rxList, rxLoading]);
+
+  // Lazy-load addresses when tab first opened
+  useEffect(() => {
+    if (tab === 'addresses' && shipAddrs === null && !shipAddrsLoading) {
+      setShipAddrsLoading(true);
+      Promise.all([
+        api.get('/customer/profile'),
+        api.get('/customer/addresses/shipping'),
+      ]).then(([prof, ship]) => {
+        setBilling(prof.data.billing_address || {});
+        setBillingForm(prof.data.billing_address || {});
+        setShipAddrs(ship.data);
+      }).catch(() => {
+        setShipAddrs([]);
+      }).finally(() => setShipAddrsLoading(false));
+    }
+  }, [tab, shipAddrs, shipAddrsLoading]);
+
+  // Lazy-load refills when tab first opened
+  useEffect(() => {
+    if (tab === 'refills' && refills === null && !refillsLoading) {
+      setRefillsLoading(true); setRefillsError('');
+      api.get('/customer/refills')
+        .then(r => setRefills(r.data))
+        .catch(() => setRefillsError('Could not load refill schedule. Please try again.'))
+        .finally(() => setRefillsLoading(false));
+    }
+  }, [tab, refills, refillsLoading]);
+
+  // ── Billing address ──────────────────────────────────────────────────────────
+  async function saveBilling(e) {
+    e.preventDefault();
+    setBillingSaving(true); setBillingMsg('');
+    try {
+      const { data } = await api.patch('/customer/addresses/billing', billingForm);
+      setBilling(data.billing_address);
+      setBillingEditing(false);
+      setBillingMsg('Billing address saved.');
+    } catch {
+      setBillingMsg('Failed to save. Please try again.');
+    } finally {
+      setBillingSaving(false);
+    }
+  }
+
+  // ── Shipping addresses ────────────────────────────────────────────────────────
+  function startAddShip() {
+    setShipForm({ ...EMPTY_ADDR, label: 'Home' });
+    setShipEditId('new');
+    setShipMsg(''); setAddrError('');
+  }
+
+  function startEditShip(addr) {
+    setShipForm({ label: addr.label, street: addr.street, street2: addr.street2 || '',
+      city: addr.city, state: addr.state, zip: addr.zip });
+    setShipEditId(addr.id);
+    setShipMsg(''); setAddrError('');
+  }
+
+  async function saveShip(e) {
+    e.preventDefault();
+    setShipSaving(true); setAddrError('');
+    try {
+      if (shipEditId === 'new') {
+        const { data } = await api.post('/customer/addresses/shipping', shipForm);
+        setShipAddrs(prev => [...(prev || []), data]);
+      } else {
+        const { data } = await api.patch(`/customer/addresses/shipping/${shipEditId}`, shipForm);
+        setShipAddrs(prev => prev.map(a => a.id === shipEditId ? data : a));
+      }
+      setShipEditId(null);
+      setShipMsg(shipEditId === 'new' ? 'Address added.' : 'Address updated.');
+    } catch (err) {
+      setAddrError(err.response?.data?.message || 'Failed to save address.');
+    } finally {
+      setShipSaving(false);
+    }
+  }
+
+  async function setDefaultShip(addrId) {
+    setShipDefaultSaving(true);
+    try {
+      await api.post(`/customer/addresses/shipping/${addrId}/set-default`);
+      setShipAddrs(prev => prev.map(a => ({ ...a, is_default: a.id === addrId })));
+    } catch {
+      setAddrError('Failed to set default. Please try again.');
+    } finally {
+      setShipDefaultSaving(false);
+    }
+  }
+
+  async function deleteShip(addrId) {
+    try {
+      await api.delete(`/customer/addresses/shipping/${addrId}`);
+      setShipAddrs(prev => {
+        const remaining = prev.filter(a => a.id !== addrId);
+        // If the deleted one was default, promote first remaining
+        const wasDefault = prev.find(a => a.id === addrId)?.is_default;
+        if (wasDefault && remaining.length > 0) {
+          remaining[0] = { ...remaining[0], is_default: true };
+        }
+        return remaining;
+      });
+      setDeleteConfirmId(null);
+    } catch (err) {
+      setAddrError(err.response?.data?.message || 'Failed to delete address.');
+      setDeleteConfirmId(null);
+    }
+  }
+
+  async function handleLogout() {
+    await api.post('/customer/logout');
+    setPatientUser(null);
+    navigate('/login');
+  }
+
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    setCpMsg(''); setCpError('');
+    try {
+      await api.post('/customer/change-password', { current_password: cpCurrent, new_password: cpNew });
+      setCpMsg('Password updated successfully.');
+      setCpCurrent(''); setCpNew('');
+    } catch (err) {
+      setCpError(err.response?.data?.message || 'Failed to update password.');
+    }
+  }
+
+  async function handleRequestRefill(ruleId) {
+    setRequestState(s => ({ ...s, [ruleId]: 'loading' }));
+    try {
+      await api.post(`/customer/refills/${ruleId}/request`);
+      setRequestState(s => ({ ...s, [ruleId]: 'sent' }));
+    } catch {
+      setRequestState(s => ({ ...s, [ruleId]: 'error' }));
+    }
+  }
+
+  const [pauseError, setPauseError] = useState({}); // { [ruleId]: message }
+  const [prefError, setPrefError] = useState({});   // { [ruleId]: message }
+  const [prefBusy, setPrefBusy] = useState({});     // { [ruleId]: bool }
+
+  async function handleSnooze(rule, days) {
+    setPrefBusy(s => ({ ...s, [rule.id]: true }));
+    setPrefError(s => ({ ...s, [rule.id]: '' }));
+    try {
+      const { data } = await api.patch(`/customer/refills/${rule.id}/snooze`, { days });
+      setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, snooze_until: data.snooze_until } : r));
+    } catch (err) {
+      setPrefError(s => ({ ...s, [rule.id]: err.response?.data?.message || 'Could not snooze.' }));
+    } finally {
+      setPrefBusy(s => ({ ...s, [rule.id]: false }));
+    }
+  }
+
+  async function handleChannel(rule, channel) {
+    setPrefBusy(s => ({ ...s, [rule.id]: true }));
+    setPrefError(s => ({ ...s, [rule.id]: '' }));
+    try {
+      const { data } = await api.patch(`/customer/refills/${rule.id}/channel`, { channel });
+      setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, channel_pref: data.channel_pref } : r));
+    } catch (err) {
+      setPrefError(s => ({ ...s, [rule.id]: err.response?.data?.message || 'Could not update channel.' }));
+    } finally {
+      setPrefBusy(s => ({ ...s, [rule.id]: false }));
+    }
+  }
+
+  async function handleAutopay(rule) {
+    setPrefBusy(s => ({ ...s, [rule.id]: true }));
+    setPrefError(s => ({ ...s, [rule.id]: '' }));
+    try {
+      const { data } = await api.patch(`/customer/refills/${rule.id}/autopay`, { enabled: !rule.autopay });
+      setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, autopay: data.autopay } : r));
+    } catch (err) {
+      setPrefError(s => ({ ...s, [rule.id]: err.response?.data?.message || 'Could not update autopay.' }));
+    } finally {
+      setPrefBusy(s => ({ ...s, [rule.id]: false }));
+    }
+  }
+
+  async function handleTogglePause(rule) {
+    setPauseLoading(s => ({ ...s, [rule.id]: true }));
+    setPauseError(s => ({ ...s, [rule.id]: '' }));
+    try {
+      const { data } = await api.patch(`/customer/refills/${rule.id}/pause`);
+      setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, active: data.active } : r));
+    } catch (err) {
+      setPauseError(s => ({
+        ...s,
+        [rule.id]: err.response?.data?.message || 'Could not update reminder. Please try again.',
+      }));
+    } finally {
+      setPauseLoading(s => ({ ...s, [rule.id]: false }));
+    }
+  }
+
+  if (loading) return (
+    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)' }}>
+      <div style={{ color: 'var(--text-secondary)', fontFamily: 'var(--brand-mono)' }}>Loading…</div>
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg-base)', color: 'var(--text-primary)' }}>
+      {/* Header */}
+      <div style={{ background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <span style={{ fontFamily: 'var(--brand-serif)', fontSize: 20 }}>🌊 Customer Portal</span>
+          <span style={{ marginLeft: 16, color: 'var(--text-muted)', fontSize: 13 }}>Welcome, {patientUser?.name}</span>
+        </div>
+        <button onClick={handleLogout} style={{ fontSize: 13, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
+          Sign out
+        </button>
+      </div>
+
+      <div style={{ maxWidth: 900, margin: '32px auto', padding: '0 24px' }}>
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
+          {TABS.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} style={{
+              padding: '8px 18px', borderRadius: 8, border: '1px solid var(--border)',
+              background: tab === t.key ? 'var(--accent)' : 'var(--bg-surface)',
+              color: tab === t.key ? '#fff' : 'var(--text-secondary)',
+              fontWeight: 600, fontSize: 13, cursor: 'pointer',
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* ── Invoices ── */}
+        {tab === 'invoices' && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 600 }}>Your Invoices</h2>
+              <button onClick={load} style={{ fontSize: 12, color: 'var(--text-muted)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>
+                Refresh
+              </button>
+            </div>
+            {loadError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{loadError}</div>
+                <button onClick={load} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
+            ) : invoices.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No invoices yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {invoices.map(inv => (
+                  <Link key={inv.id} to={`/customer/portal/invoice/${inv.id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                    <div style={{
+                      background: 'var(--bg-surface)', border: '1px solid var(--border)',
+                      borderRadius: 10, padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      cursor: 'pointer',
+                    }}
+                      onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--accent)'}
+                      onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{inv.invoice_number}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Order: {inv.order_number}</div>
+                        {inv.due_date && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Due: {inv.due_date}</div>}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                        <Badge label={inv.pay_status} color={STATUS_COLOR[inv.pay_status] || 'var(--text-muted)'} />
+                        <span style={{ fontWeight: 600 }}>{fmt(inv.total)}</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>View →</span>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Shipments ── */}
+        {tab === 'shipments' && (
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Your Shipments</h2>
+            {loadError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{loadError}</div>
+                <button onClick={load} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
+            ) : shipments.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No shipments yet.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {shipments.map(s => (
+                  <div key={s.id} style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '16px 20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontWeight: 600 }}>Order: {s.order_number}</span>
+                      <Badge label={s.status} color={STATUS_COLOR[s.status] || 'var(--text-muted)'} />
+                    </div>
+                    {s.fedex_tracking_number && (
+                      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+                        Tracking: <span style={{ fontFamily: 'var(--brand-mono)' }}>{s.fedex_tracking_number}</span>
+                      </div>
+                    )}
+                    {s.latest_status && <div style={{ fontSize: 13, marginTop: 4 }}>{s.latest_status}</div>}
+                    {s.estimated_delivery && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Est. delivery: {s.estimated_delivery}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Prescriptions ── */}
+        {tab === 'prescriptions' && (
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Your Prescriptions</h2>
+            {rxLoading ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
+            ) : rxError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{rxError}</div>
+                <button onClick={() => { setRxList(null); setRxError(''); }} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
+            ) : !rxList || rxList.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No prescriptions on file.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {rxList.map(rx => {
+                  const today = new Date().toISOString().split('T')[0];
+                  const expired = rx.expiry_date && rx.expiry_date < today;
+                  return (
+                    <div key={rx.id} style={{ background: 'var(--bg-surface)', border: `1px solid ${expired ? 'var(--danger)' : 'var(--border)'}`, borderRadius: 10, padding: '18px 20px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
+                            Dr. {rx.prescribing_doctor}
+                          </div>
+                          <div style={{ fontSize: 13, color: 'var(--text-muted)', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+                            <span>Issued: {fmtDate(rx.issue_date)}</span>
+                            {rx.expiry_date && (
+                              <span style={{ color: expired ? 'var(--danger)' : 'var(--text-muted)' }}>
+                                {expired ? 'Expired: ' : 'Expires: '}{fmtDate(rx.expiry_date)}
+                              </span>
+                            )}
+                          </div>
+                          {rx.notes && (
+                            <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 6 }}>{rx.notes}</div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                          {expired && <Badge label="Expired" color="var(--danger)" />}
+                          <a
+                            href={`/api/customer/prescriptions/${rx.id}/file`}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ fontSize: 13, color: 'var(--accent)', textDecoration: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '5px 12px', whiteSpace: 'nowrap' }}
+                          >
+                            View
+                          </a>
+                          <a
+                            href={`/api/customer/prescriptions/${rx.id}/file?download=1`}
+                            style={{ fontSize: 13, color: 'var(--text-secondary)', textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '5px 12px', whiteSpace: 'nowrap' }}
+                          >
+                            Download
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Refills ── */}
+        {tab === 'refills' && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 600 }}>Your Refill Schedule</h2>
+              <button
+                onClick={() => { setRefills(null); setRefillsLoading(false); }}
+                style={{ fontSize: 12, color: 'var(--text-muted)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}
+              >
+                Refresh
+              </button>
+            </div>
+            {refillsLoading ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
+            ) : refillsError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{refillsError}</div>
+                <button onClick={() => { setRefills(null); setRefillsError(''); }} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
+            ) : !refills || refills.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No refill schedule set up yet. Contact us to get started.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {refills.map(rule => {
+                  const nextDue = calcNextDue(rule);
+                  const today = new Date().toISOString().split('T')[0];
+                  const overdue = nextDue && nextDue < today;
+                  const dueSoon = nextDue && !overdue && nextDue <= new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0];
+                  const reqStatus = requestState[rule.id] || 'idle';
+                  const latestReq = rule.latest_request;
+                  const hasPendingRequest = latestReq && latestReq.status === 'pending';
+                  return (
+                    <div key={rule.id} style={{
+                      background: 'var(--bg-surface)',
+                      border: `1px solid ${overdue ? 'var(--danger)' : dueSoon ? 'var(--warning)' : 'var(--border)'}`,
+                      borderRadius: 10, padding: '18px 20px',
+                      opacity: rule.active ? 1 : 0.6,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ flex: 1, minWidth: 200 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                            <span style={{ fontWeight: 600, fontSize: 15 }}>{rule.product_name || 'Unknown product'}</span>
+                            {!rule.active && <Badge label="Paused" color="var(--text-muted)" />}
+                            {rule.active && overdue && <Badge label="Overdue" color="var(--danger)" />}
+                            {rule.active && dueSoon && <Badge label="Due Soon" color="var(--warning)" />}
+                          </div>
+
+                          <div style={{ fontSize: 13, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            {rule.dosage_mg && (
+                              <span>
+                                Dosage: {rule.dosage_mg} mg {rule.dosage_freq}
+                                {rule.doses_per_freq && parseFloat(rule.doses_per_freq) !== 1
+                                  ? ` × ${rule.doses_per_freq}`
+                                  : ''}
+                              </span>
+                            )}
+                            {nextDue && (
+                              <span style={{ color: overdue ? 'var(--danger)' : dueSoon ? 'var(--warning)' : 'inherit' }}>
+                                {overdue ? 'Was due: ' : 'Next refill: '}{fmtDate(nextDue)}
+                              </span>
+                            )}
+                            {rule.last_fill_date && (
+                              <span>Last filled: {fmtDate(rule.last_fill_date)}</span>
+                            )}
+                          </div>
+
+                          {/* Latest request status */}
+                          {latestReq && (
+                            <div style={{ marginTop: 8, fontSize: 12 }}>
+                              {latestReq.status === 'pending' && (
+                                <span style={{ color: 'var(--warning)' }}>
+                                  Refill request sent {fmtDate(latestReq.created_at)} — awaiting confirmation
+                                </span>
+                              )}
+                              {latestReq.status === 'confirmed' && (
+                                <span style={{ color: 'var(--success)' }}>
+                                  Last refill confirmed {fmtDate(latestReq.responded_at || latestReq.created_at)}
+                                </span>
+                              )}
+                              {latestReq.status === 'declined' && (
+                                <span style={{ color: 'var(--danger)' }}>
+                                  Last refill declined {fmtDate(latestReq.responded_at || latestReq.created_at)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
+                          {/* Request refill button */}
+                          {rule.active && (
+                            reqStatus === 'sent' ? (
+                              <span style={{ fontSize: 13, color: 'var(--success)' }}>Request sent ✓</span>
+                            ) : reqStatus === 'error' ? (
+                              <button
+                                onClick={() => handleRequestRefill(rule.id)}
+                                style={{
+                                  background: 'var(--danger)', color: '#fff', border: 'none',
+                                  borderRadius: 8, padding: '8px 16px', fontWeight: 600, fontSize: 13,
+                                  cursor: 'pointer', whiteSpace: 'nowrap',
+                                }}
+                              >
+                                Failed — try again
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleRequestRefill(rule.id)}
+                                disabled={reqStatus === 'loading' || hasPendingRequest}
+                                title={hasPendingRequest ? 'A refill request is already pending' : ''}
+                                style={{
+                                  background: 'var(--accent)', color: '#fff', border: 'none',
+                                  borderRadius: 8, padding: '8px 16px', fontWeight: 600, fontSize: 13,
+                                  cursor: (reqStatus === 'loading' || hasPendingRequest) ? 'not-allowed' : 'pointer',
+                                  opacity: (reqStatus === 'loading' || hasPendingRequest) ? 0.6 : 1,
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {reqStatus === 'loading' ? 'Sending…' : hasPendingRequest ? 'Request Pending' : 'Request Refill'}
+                              </button>
+                            )
+                          )}
+
+                          {/* Pause / Resume toggle */}
+                          <button
+                            onClick={() => handleTogglePause(rule)}
+                            disabled={!!pauseLoading[rule.id]}
+                            style={{
+                              background: 'none', border: '1px solid var(--border)', borderRadius: 8,
+                              padding: '6px 14px', fontSize: 12, fontWeight: 600,
+                              color: rule.active ? 'var(--text-muted)' : 'var(--accent)',
+                              cursor: pauseLoading[rule.id] ? 'not-allowed' : 'pointer',
+                              opacity: pauseLoading[rule.id] ? 0.5 : 1,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {pauseLoading[rule.id] ? '…' : rule.active ? 'Pause Reminders' : 'Resume Reminders'}
+                          </button>
+                          {pauseError[rule.id] && (
+                            <div style={{ fontSize: 11, color: 'var(--danger)', maxWidth: 200, textAlign: 'right', lineHeight: 1.4 }}>
+                              {pauseError[rule.id]}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* ── Reminder settings footer ── */}
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12, display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center', fontSize: 12 }}>
+                        {/* Snooze */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Snooze:</span>
+                          {rule.snooze_until && rule.snooze_until >= new Date().toISOString().split('T')[0] ? (
+                            <>
+                              <span style={{ color: 'var(--warning)', fontWeight: 600 }}>until {rule.snooze_until}</span>
+                              <button onClick={() => handleSnooze(rule, 0)} disabled={!!prefBusy[rule.id]}
+                                style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 12, textDecoration: 'underline', padding: 0 }}>
+                                clear
+                              </button>
+                            </>
+                          ) : (
+                            [7, 14, 30].map(d => (
+                              <button key={d} onClick={() => handleSnooze(rule, d)} disabled={!!prefBusy[rule.id]}
+                                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}>
+                                {d === 7 ? '1 wk' : d === 14 ? '2 wks' : '1 mo'}
+                              </button>
+                            ))
+                          )}
+                        </div>
+
+                        {/* Channel */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Remind me by:</span>
+                          {['email', 'sms', 'both'].map(ch => (
+                            <button key={ch} onClick={() => handleChannel(rule, ch)} disabled={!!prefBusy[rule.id] || rule.channel_pref === ch}
+                              style={{
+                                background: rule.channel_pref === ch ? 'var(--accent)' : 'none',
+                                color: rule.channel_pref === ch ? '#fff' : 'var(--text-secondary)',
+                                border: `1px solid ${rule.channel_pref === ch ? 'var(--accent)' : 'var(--border)'}`,
+                                borderRadius: 5, cursor: 'pointer', fontSize: 11, padding: '2px 8px', textTransform: 'uppercase',
+                              }}>
+                              {ch}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Autopay */}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginLeft: 'auto' }}
+                          title={!rule.has_saved_card && !rule.autopay ? 'Pay an invoice by card first to enable autopay' : ''}>
+                          <input type="checkbox" checked={!!rule.autopay} disabled={!!prefBusy[rule.id]}
+                            onChange={() => handleAutopay(rule)} />
+                          <span style={{ color: rule.autopay ? 'var(--success)' : 'var(--text-muted)', fontWeight: rule.autopay ? 600 : 400 }}>
+                            Autopay {rule.autopay ? 'on — ships automatically' : 'off'}
+                          </span>
+                        </label>
+
+                        {prefError[rule.id] && (
+                          <div style={{ width: '100%', fontSize: 11, color: 'var(--danger)' }}>{prefError[rule.id]}</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Addresses ── */}
+        {tab === 'addresses' && (
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 24 }}>Addresses</h2>
+
+            {shipAddrsLoading ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
+            ) : (
+              <>
+                {/* ── Billing Address ── */}
+                <div style={{ marginBottom: 32 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 600 }}>Billing Address</h3>
+                    {!billingEditing && (
+                      <button
+                        onClick={() => { setBillingForm(billing || {}); setBillingEditing(true); setBillingMsg(''); }}
+                        style={{ fontSize: 13, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+
+                  {billingEditing ? (
+                    <div style={cardStyle}>
+                      <form onSubmit={saveBilling}>
+                        <AddrFields form={billingForm} setForm={setBillingForm} />
+                        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                          <button type="submit" disabled={billingSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: billingSaving ? 'not-allowed' : 'pointer', opacity: billingSaving ? 0.6 : 1 }}>
+                            {billingSaving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button type="button" onClick={() => { setBillingEditing(false); setBillingMsg(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 18px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  ) : (
+                    <div style={cardStyle}>
+                      {billing && billing.street ? (
+                        <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+                          <div>{billing.street}</div>
+                          {billing.street2 && <div>{billing.street2}</div>}
+                          <div>{billing.city}, {billing.state} {billing.zip}</div>
+                        </div>
+                      ) : (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No billing address on file.</div>
+                      )}
+                    </div>
+                  )}
+                  {billingMsg && (
+                    <div style={{ marginTop: 8, fontSize: 13, color: billingMsg.startsWith('Failed') ? 'var(--danger)' : 'var(--success)' }}>
+                      {billingMsg}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Shipping Addresses ── */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 600 }}>Shipping Addresses</h3>
+                    {shipEditId === null && (
+                      <button
+                        onClick={startAddShip}
+                        style={{ fontSize: 13, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}
+                      >
+                        + Add Address
+                      </button>
+                    )}
+                  </div>
+
+                  {addrError && (
+                    <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--danger)' }}>{addrError}</div>
+                  )}
+                  {shipMsg && (
+                    <div style={{ marginBottom: 12, fontSize: 13, color: 'var(--success)' }}>{shipMsg}</div>
+                  )}
+
+                  {/* Add new address form */}
+                  {shipEditId === 'new' && (
+                    <div style={{ ...cardStyle, marginBottom: 14, borderColor: 'var(--accent)' }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14 }}>New Shipping Address</div>
+                      <form onSubmit={saveShip}>
+                        <AddrFields form={shipForm} setForm={setShipForm} showLabel />
+                        <div style={{ marginBottom: 12 }}>
+                          <label style={labelStyle}>Country</label>
+                          <div style={{ fontSize: 14, color: 'var(--text-secondary)', padding: '8px 10px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                            United States (US)
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <button type="submit" disabled={shipSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: shipSaving ? 'not-allowed' : 'pointer', opacity: shipSaving ? 0.6 : 1 }}>
+                            {shipSaving ? 'Saving…' : 'Add Address'}
+                          </button>
+                          <button type="button" onClick={() => { setShipEditId(null); setAddrError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 18px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+
+                  {/* Existing addresses */}
+                  {!shipAddrs || shipAddrs.length === 0 ? (
+                    shipEditId !== 'new' && <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No shipping addresses saved yet.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {shipAddrs.map(addr => (
+                        <div key={addr.id} style={{ ...cardStyle, borderColor: addr.is_default ? 'var(--accent)' : 'var(--border)' }}>
+                          {shipEditId === addr.id ? (
+                            /* Edit inline form */
+                            <form onSubmit={saveShip}>
+                              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14 }}>Edit Address</div>
+                              <AddrFields form={shipForm} setForm={setShipForm} showLabel />
+                              <div style={{ marginBottom: 12 }}>
+                                <label style={labelStyle}>Country</label>
+                                <div style={{ fontSize: 14, color: 'var(--text-secondary)', padding: '8px 10px', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                                  United States (US)
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: 10 }}>
+                                <button type="submit" disabled={shipSaving} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: shipSaving ? 'not-allowed' : 'pointer', opacity: shipSaving ? 0.6 : 1 }}>
+                                  {shipSaving ? 'Saving…' : 'Save'}
+                                </button>
+                                <button type="button" onClick={() => { setShipEditId(null); setAddrError(''); }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 18px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : deleteConfirmId === addr.id ? (
+                            /* Delete confirmation */
+                            <div>
+                              <div style={{ fontSize: 14, marginBottom: 12 }}>
+                                Delete <strong>{addr.label}</strong>? This cannot be undone.
+                              </div>
+                              <div style={{ display: 'flex', gap: 10 }}>
+                                <button onClick={() => deleteShip(addr.id)} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 16px', fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+                                  Yes, delete
+                                </button>
+                                <button onClick={() => setDeleteConfirmId(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '7px 16px', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' }}>
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Address display */
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                  <span style={{ fontWeight: 600, fontSize: 14 }}>{addr.label}</span>
+                                  {addr.is_default && <Badge label="Default" color="var(--accent)" />}
+                                </div>
+                                <div style={{ fontSize: 14, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+                                  <div>{addr.street}</div>
+                                  {addr.street2 && <div>{addr.street2}</div>}
+                                  <div>{addr.city}, {addr.state} {addr.zip}</div>
+                                  <div>United States</div>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end', flexShrink: 0 }}>
+                                <button
+                                  onClick={() => startEditShip(addr)}
+                                  style={{ fontSize: 12, color: 'var(--text-secondary)', background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}
+                                >
+                                  Edit
+                                </button>
+                                {!addr.is_default && (
+                                  <button
+                                    onClick={() => setDefaultShip(addr.id)}
+                                    disabled={shipDefaultSaving}
+                                    style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: '1px solid var(--accent)', borderRadius: 6, padding: '4px 10px', cursor: shipDefaultSaving ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap', opacity: shipDefaultSaving ? 0.6 : 1 }}
+                                  >
+                                    {shipDefaultSaving ? 'Saving…' : 'Set Default'}
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => { setDeleteConfirmId(addr.id); setAddrError(''); }}
+                                  style={{ fontSize: 12, color: 'var(--danger)', background: 'none', border: '1px solid var(--danger)', borderRadius: 6, padding: '4px 10px', cursor: 'pointer' }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ── Account ── */}
+        {tab === 'account' && (
+          <div>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20 }}>Change Password</h2>
+            <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 10, padding: 24, maxWidth: 400 }}>
+              <form onSubmit={handleChangePassword}>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>Current password</label>
+                  <input type="password" value={cpCurrent} onChange={e => setCpCurrent(e.target.value)} required style={{ width: '100%' }} />
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 13, color: 'var(--text-secondary)', marginBottom: 6 }}>New password (min 8 chars)</label>
+                  <input type="password" value={cpNew} onChange={e => setCpNew(e.target.value)} required minLength={8} style={{ width: '100%' }} />
+                </div>
+                {cpMsg && <div style={{ color: 'var(--success)', fontSize: 13, marginBottom: 12 }}>{cpMsg}</div>}
+                {cpError && <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 12 }}>{cpError}</div>}
+                <button type="submit" style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', fontWeight: 600, cursor: 'pointer' }}>
+                  Update Password
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
