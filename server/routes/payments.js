@@ -183,17 +183,26 @@ router.post('/:invoiceId/usdc-confirm', ensurePayAccess, validate(usdcConfirmSch
       });
     }
 
-    let updated;
+    let updated, order;
     try {
-      [updated] = await db.update(invoices)
-        .set({
-          pay_status: 'paid',
-          pay_method: `usdc_${result.network}`,
-          usdc_tx_hash: tx_hash,
-          paid_at: new Date(),
-        })
-        .where(eq(invoices.id, invoice.id))
-        .returning();
+      await db.transaction(async (tx) => {
+        [updated] = await tx.update(invoices)
+          .set({
+            pay_status: 'paid',
+            pay_method: `usdc_${result.network}`,
+            usdc_tx_hash: tx_hash,
+            paid_at: new Date(),
+          })
+          .where(eq(invoices.id, invoice.id))
+          .returning();
+
+        [order] = await tx.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+        if (order && !['shipped', 'delivered'].includes(order.status)) {
+          await tx.update(sales_orders)
+            .set({ status: 'paid', updated_at: new Date() })
+            .where(eq(sales_orders.id, invoice.order_id));
+        }
+      });
     } catch (err) {
       // Unique index race: another confirm claimed this tx_hash first
       if (err.code === '23505') {
@@ -202,12 +211,7 @@ router.post('/:invoiceId/usdc-confirm', ensurePayAccess, validate(usdcConfirmSch
       throw err;
     }
 
-    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
-
-    await db.update(sales_orders)
-      .set({ status: 'paid', updated_at: new Date() })
-      .where(eq(sales_orders.id, invoice.order_id));
 
     try {
       await sendPaymentConfirmation(patient, order, updated, 'usdc');

@@ -89,6 +89,7 @@ app.get('/api/config', (req, res) => {
 });
 
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/customer', require('./routes/patient-auth'));
 app.use('/api/customer', require('./routes/patient-portal'));

@@ -75,35 +75,37 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
     const shipping_charge = order.shipping_quote?.net_charge ? parseFloat(order.shipping_quote.net_charge) : 0;
     const due_date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    // Retry on unique-violation from concurrent invoice_number collisions
+    // Atomic invoice-create + order-status-update — a failed status update
+    // used to leave the order stuck in 'draft' with an invoice that could
+    // not be paid. Retry the transaction on invoice_number collision.
     let invoice;
     for (let attempt = 0; attempt < 5; attempt++) {
       const invoice_number = await generateInvoiceNumber();
       try {
-        [invoice] = await db.insert(invoices).values({
-          invoice_number,
-          order_id: order.id,
-          subtotal: subtotal.toFixed(2),
-          shipping_charge: shipping_charge.toFixed(2),
-          processing_fee: '0.00',
-          total: (subtotal + shipping_charge).toFixed(2),
-          pay_status: 'pending',
-          due_date,
-          pay_token: generatePayToken(),
-          pay_token_expires_at: payTokenExpiresAt(3),
-        }).returning();
+        await db.transaction(async (tx) => {
+          [invoice] = await tx.insert(invoices).values({
+            invoice_number,
+            order_id: order.id,
+            subtotal: subtotal.toFixed(2),
+            shipping_charge: shipping_charge.toFixed(2),
+            processing_fee: '0.00',
+            total: (subtotal + shipping_charge).toFixed(2),
+            pay_status: 'pending',
+            due_date,
+            pay_token: generatePayToken(),
+            pay_token_expires_at: payTokenExpiresAt(3),
+          }).returning();
+
+          await tx.update(sales_orders)
+            .set({ status: 'pending_payment', updated_at: new Date() })
+            .where(eq(sales_orders.id, order.id));
+        });
         break;
       } catch (err) {
         if (err.code !== '23505' || attempt === 4) throw err;
-        // brief jittered backoff and try again with a fresh number
         await new Promise(r => setTimeout(r, 10 + Math.random() * 40));
       }
     }
-
-    // Update order status
-    await db.update(sales_orders)
-      .set({ status: 'pending_payment', updated_at: new Date() })
-      .where(eq(sales_orders.id, order.id));
 
     // Generate PDF
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
@@ -141,6 +143,8 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
 router.get('/invoices', requireLogin, async (req, res) => {
   try {
     const showDeleted = req.query.deleted === 'true';
+    const limit  = Math.min(5000, Math.max(1, parseInt(req.query.limit, 10) || 5000));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const rows = await db.select({
       invoice: invoices,
       order_number: sales_orders.order_number,
@@ -150,7 +154,9 @@ router.get('/invoices', requireLogin, async (req, res) => {
       .leftJoin(sales_orders, eq(invoices.order_id, sales_orders.id))
       .leftJoin(patients, eq(sales_orders.patient_id, patients.id))
       .where(showDeleted ? undefined : isNull(invoices.deleted_at))
-      .orderBy(invoices.created_at);
+      .orderBy(invoices.created_at)
+      .limit(limit)
+      .offset(offset);
     return res.json(rows.map(r => ({
       ...r.invoice,
       order_number: r.order_number,

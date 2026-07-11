@@ -22,25 +22,12 @@ export default function Dashboard() {
   const [recentOrders, setRecentOrders] = useState([]);
 
   useEffect(() => {
-    Promise.all([
-      api.get('/orders'),
-      api.get('/invoices'),
-      api.get('/reminders'),
-    ]).then(([ordersRes, invoicesRes, remindersRes]) => {
-      const orders = ordersRes.data;
-      const invoices = invoicesRes.data;
-      const reminders = remindersRes.data;
-
-      const revenue = invoices
-        .filter(i => i.pay_status === 'paid')
-        .reduce((sum, i) => sum + parseFloat(i.total || 0), 0);
-
-      const pending = invoices.filter(i => i.pay_status === 'pending').length;
-      const shipped = orders.filter(o => o.status === 'shipped').length;
-      const overdue = reminders.filter(r => r.overdue).length;
-
-      setStats({ revenue, pending, shipped, overdue, total_orders: orders.length });
-      setRecentOrders(orders.slice(0, 8));
+    // Single aggregate stats call — no more downloading full order/invoice
+    // tables just to count rows.
+    api.get('/dashboard/stats').then(res => {
+      const { revenue, pending, shipped, overdue, total_orders, recent_orders } = res.data;
+      setStats({ revenue, pending, shipped, overdue, total_orders });
+      setRecentOrders(recent_orders || []);
     }).catch(console.error);
 
     api.get('/reminders/shipments/exceptions')

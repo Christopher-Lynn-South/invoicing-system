@@ -5,6 +5,7 @@ const { admin_users } = require('../db/schema');
 const { eq, ne } = require('drizzle-orm');
 const { validate, loginSchema } = require('../middleware/validate');
 const { requireLogin, requireRole } = require('../middleware/auth');
+const { purgeAdminSessions } = require('../services/sessions');
 
 const router = express.Router();
 
@@ -85,6 +86,16 @@ router.post('/change-password', requireLogin, async (req, res) => {
 
     const hash = await bcrypt.hash(new_password, 12);
     await db.update(admin_users).set({ password_hash: hash }).where(eq(admin_users.id, user.id));
+
+    // Kill all sessions for this admin, then re-seed the current one so the
+    // caller isn't immediately logged out mid-request.
+    await purgeAdminSessions(user.id);
+    req.session.adminId    = user.id;
+    req.session.adminEmail = user.email;
+    req.session.adminName  = user.name;
+    req.session.adminRole  = user.role;
+    await new Promise(resolve => req.session.save(resolve));
+
     return res.json({ ok: true });
   } catch (err) {
     console.error('Change password error:', err);
@@ -145,6 +156,8 @@ router.delete('/users/:id', requireRole('admin'), async (req, res) => {
   try {
     const result = await db.delete(admin_users).where(eq(admin_users.id, req.params.id)).returning({ id: admin_users.id });
     if (!result.length) return res.status(404).json({ error: 'NOT_FOUND' });
+    // Immediately terminate all active sessions for the deleted user
+    await purgeAdminSessions(req.params.id);
     return res.json({ ok: true });
   } catch (err) {
     console.error('Delete user error:', err);
@@ -162,6 +175,8 @@ router.patch('/users/:id/reset-password', requireRole('admin'), async (req, res)
     const hash = await bcrypt.hash(new_password, 12);
     const result = await db.update(admin_users).set({ password_hash: hash }).where(eq(admin_users.id, req.params.id)).returning({ id: admin_users.id });
     if (!result.length) return res.status(404).json({ error: 'NOT_FOUND' });
+    // Force sign-out of every active session for the target user
+    await purgeAdminSessions(req.params.id);
     return res.json({ ok: true });
   } catch (err) {
     console.error('Reset password error:', err);

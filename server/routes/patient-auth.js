@@ -7,6 +7,7 @@ const { eq } = require('drizzle-orm');
 const { requirePatientLogin } = require('../middleware/auth');
 const { requireLogin } = require('../middleware/auth');
 const { sendMail } = require('../services/mailer');
+const { purgeCustomerSessions } = require('../services/sessions');
 
 const router = express.Router();
 
@@ -88,6 +89,15 @@ router.post('/change-password', requirePatientLogin, async (req, res) => {
 
     const hash = await bcrypt.hash(new_password, 12);
     await db.update(patients).set({ password_hash: hash }).where(eq(patients.id, patient.id));
+    // Invalidate every other session — force sign-in on all other devices
+    const currentSid = req.sessionID;
+    await purgeCustomerSessions(patient.id);
+    // Re-save current session (so the caller isn't logged out mid-request)
+    req.session.customerId    = patient.id;
+    req.session.customerEmail = patient.email;
+    req.session.customerName  = patient.name;
+    await new Promise(resolve => req.session.save(resolve));
+    void currentSid;
     return res.json({ ok: true });
   } catch (err) {
     console.error('Patient change password error:', err);
@@ -165,6 +175,10 @@ router.post('/reset-password', async (req, res) => {
       .set({ password_hash: hash, portal_enabled: true, reset_token: null, reset_token_expires_at: null })
       .where(eq(patients.id, patient.id));
 
+    // Kill every existing session for this patient — reset-flow assumes the
+    // account may be compromised, so any active cookies must stop working.
+    await purgeCustomerSessions(patient.id);
+
     return res.json({ ok: true });
   } catch (err) {
     console.error('Reset password error:', err);
@@ -217,6 +231,8 @@ router.post('/revoke-access/:patientId', requireLogin, async (req, res) => {
       .where(eq(patients.id, req.params.patientId))
       .returning({ id: patients.id });
     if (!result.length) return res.status(404).json({ error: 'NOT_FOUND' });
+    // Force sign-out of any active portal sessions for this patient
+    await purgeCustomerSessions(req.params.patientId);
     return res.json({ ok: true });
   } catch (err) {
     console.error('Revoke access error:', err);

@@ -49,19 +49,27 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
       }
 
       if (invoice && invoice.pay_status !== 'paid') {
-        const [updated] = await db.update(invoices)
-          .set({ pay_status: 'paid', paid_at: new Date() })
-          .where(eq(invoices.id, invoice.id))
-          .returning();
+        let updated, order, customer;
+        await db.transaction(async (tx) => {
+          [updated] = await tx.update(invoices)
+            .set({ pay_status: 'paid', paid_at: new Date() })
+            .where(eq(invoices.id, invoice.id))
+            .returning();
 
-        const [order] = await db.select().from(sales_orders)
-          .where(eq(sales_orders.id, invoice.order_id));
-        const [customer] = await db.select().from(patients)
+          [order] = await tx.select().from(sales_orders)
+            .where(eq(sales_orders.id, invoice.order_id));
+
+          // Don't downgrade an already-shipped order — but a webhook should
+          // never fire on a shipped order anyway. Still, keep the guard.
+          if (order && !['shipped', 'delivered'].includes(order.status)) {
+            await tx.update(sales_orders)
+              .set({ status: 'paid', updated_at: new Date() })
+              .where(eq(sales_orders.id, invoice.order_id));
+          }
+        });
+
+        [customer] = await db.select().from(patients)
           .where(eq(patients.id, order.patient_id));
-
-        await db.update(sales_orders)
-          .set({ status: 'paid', updated_at: new Date() })
-          .where(eq(sales_orders.id, invoice.order_id));
 
         const method = invoice.pay_method === 'ach' ? 'ach' : 'stripe_cc';
         try {

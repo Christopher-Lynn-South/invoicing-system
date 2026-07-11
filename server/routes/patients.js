@@ -57,14 +57,39 @@ const upload = multer({
   },
 });
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Verify :id is a real UUID and the patient exists BEFORE multer writes any
+// bytes to disk. Prevents (a) directory injection via a crafted :id, and
+// (b) orphaned uploads for typo'd/nonexistent patient IDs.
+async function ensurePatientExists(req, res, next) {
+  const id = req.params.id;
+  if (!id || !UUID_RE.test(id)) {
+    return res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Invalid patient id.' });
+  }
+  try {
+    const [p] = await db.select({ id: patients.id }).from(patients)
+      .where(and(eq(patients.id, id), isNull(patients.deleted_at))).limit(1);
+    if (!p) return res.status(404).json({ error: 'PATIENT_NOT_FOUND' });
+    next();
+  } catch (err) {
+    console.error('ensurePatientExists error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR' });
+  }
+}
+
 // ─── Patients CRUD ────────────────────────────────────────────────────────────
 
 // GET /api/patients
 router.get('/', requireLogin, async (req, res) => {
   try {
+    const limit  = Math.min(5000, Math.max(1, parseInt(req.query.limit, 10) || 5000));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     const rows = await db.select().from(patients)
       .where(isNull(patients.deleted_at))
-      .orderBy(desc(patients.created_at));
+      .orderBy(desc(patients.created_at))
+      .limit(limit)
+      .offset(offset);
     return res.json(rows);
   } catch (err) {
     console.error(err);
@@ -166,7 +191,14 @@ router.get('/:id/prescriptions', requireLogin, async (req, res) => {
 });
 
 // POST /api/patients/:id/prescriptions
-router.post('/:id/prescriptions', requireLogin, upload.single('file'), async (req, res) => {
+// Order matters: requireLogin → validate :id + patient exists → multer → handler.
+// Any failure after multer wrote to disk unlinks the file to avoid orphans.
+router.post('/:id/prescriptions', requireLogin, ensurePatientExists, upload.single('file'), async (req, res) => {
+  const cleanupFile = () => {
+    if (req.file?.path) {
+      try { fs.unlinkSync(req.file.path); } catch { /* already gone — fine */ }
+    }
+  };
   try {
     if (!req.file) return res.status(400).json({ error: 'FILE_REQUIRED' });
     const body = {
@@ -179,21 +211,28 @@ router.post('/:id/prescriptions', requireLogin, upload.single('file'), async (re
     };
     const parsed = prescriptionSchema.safeParse(body);
     if (!parsed.success) {
-      fs.unlinkSync(req.file.path);
+      cleanupFile();
       return res.status(400).json({ error: 'VALIDATION_ERROR', details: parsed.error.flatten() });
     }
-    const [row] = await db.insert(prescriptions).values({
-      patient_id: req.params.id,
-      ...parsed.data,
-      file_path: req.file.path,
-      file_name: req.file.originalname,
-      file_mime: req.file.mimetype,
-      file_size_bytes: req.file.size,
-      uploaded_by: req.session.adminId,
-    }).returning();
-    return res.status(201).json(row);
+    try {
+      const [row] = await db.insert(prescriptions).values({
+        patient_id: req.params.id,
+        ...parsed.data,
+        file_path: req.file.path,
+        file_name: req.file.originalname,
+        file_mime: req.file.mimetype,
+        file_size_bytes: req.file.size,
+        uploaded_by: req.session.adminId,
+      }).returning();
+      return res.status(201).json(row);
+    } catch (dbErr) {
+      // Clean up the orphaned upload if the DB write failed
+      cleanupFile();
+      throw dbErr;
+    }
   } catch (err) {
     console.error(err);
+    cleanupFile();
     return res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });

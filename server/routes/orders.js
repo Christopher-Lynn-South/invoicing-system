@@ -47,9 +47,14 @@ async function generateOrderNumber() {
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // GET /api/orders
+// Optional query: status, patient_id, limit (1..5000, default 5000), offset (0+).
+// A hard 5000 cap prevents runaway payloads on very large datasets while
+// remaining backward-compatible (no limit param = full backlog up to cap).
 router.get('/', requireLogin, async (req, res) => {
   try {
     const { status, patient_id } = req.query;
+    const limit  = Math.min(5000, Math.max(1, parseInt(req.query.limit, 10) || 5000));
+    const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
     let query = db.select({
       order: sales_orders,
       patient_name: patients.name,
@@ -63,7 +68,7 @@ router.get('/', requireLogin, async (req, res) => {
     if (patient_id) conditions.push(eq(sales_orders.patient_id, patient_id));
     if (conditions.length) query = query.where(and(...conditions));
 
-    const rows = await query.orderBy(desc(sales_orders.created_at));
+    const rows = await query.orderBy(desc(sales_orders.created_at)).limit(limit).offset(offset);
     return res.json(rows.map(r => ({ ...r.order, patient_name: r.patient_name, patient_email: r.patient_email })));
   } catch (err) {
     console.error(err);
@@ -108,38 +113,42 @@ router.post('/', requireLogin, validate(orderSchema), async (req, res) => {
       }
     }
 
-    // Retry on unique-violation from concurrent order_number collisions
-    let order;
+    // Atomic order + line-items insert. Wrapped in a transaction so a failed
+    // items insert can't leave a zero-line-item ghost order. Retry the WHOLE
+    // transaction on unique-violation from concurrent order_number races.
+    let order, insertedItems;
     for (let attempt = 0; attempt < 5; attempt++) {
       const order_number = await generateOrderNumber();
       try {
-        [order] = await db.insert(sales_orders).values({
-          order_number,
-          patient_id,
-          status: 'draft',
-          notes,
-        }).returning();
+        await db.transaction(async (tx) => {
+          [order] = await tx.insert(sales_orders).values({
+            order_number,
+            patient_id,
+            status: 'draft',
+            notes,
+          }).returning();
+
+          const itemRows = items.map(item => {
+            const product = productMap[item.product_id];
+            const unit_price = parseFloat(product.unit_price);
+            const line_total = (unit_price * item.quantity).toFixed(2);
+            return {
+              order_id: order.id,
+              product_id: item.product_id,
+              quantity: item.quantity,
+              unit_price: unit_price.toFixed(2),
+              line_total,
+            };
+          });
+
+          insertedItems = await tx.insert(order_items).values(itemRows).returning();
+        });
         break;
       } catch (err) {
         if (err.code !== '23505' || attempt === 4) throw err;
         await new Promise(r => setTimeout(r, 10 + Math.random() * 40));
       }
     }
-
-    const itemRows = items.map(item => {
-      const product = productMap[item.product_id];
-      const unit_price = parseFloat(product.unit_price);
-      const line_total = (unit_price * item.quantity).toFixed(2);
-      return {
-        order_id: order.id,
-        product_id: item.product_id,
-        quantity: item.quantity,
-        unit_price: unit_price.toFixed(2),
-        line_total,
-      };
-    });
-
-    const insertedItems = await db.insert(order_items).values(itemRows).returning();
 
     return res.status(201).json({ ...order, items: insertedItems });
   } catch (err) {
