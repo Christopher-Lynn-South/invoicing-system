@@ -1,5 +1,186 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../lib/api';
+
+// ─── Zoho API sync panel ───────────────────────────────────────────────────────
+function ZohoApiSync() {
+  const [status, setStatus] = useState(null); // { configured, job }
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState('');
+  const pollRef = useRef(null);
+
+  const refresh = () => api.get('/import/zoho-api/status')
+    .then(r => setStatus(r.data))
+    .catch(() => {});
+
+  useEffect(() => {
+    refresh();
+    return () => clearInterval(pollRef.current);
+  }, []);
+
+  // Poll while a job runs
+  useEffect(() => {
+    if (status?.job?.status === 'running' && !pollRef.current) {
+      pollRef.current = setInterval(refresh, 2500);
+    }
+    if (status?.job?.status !== 'running' && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, [status?.job?.status]);
+
+  async function start() {
+    setStarting(true); setError('');
+    try {
+      await api.post('/import/zoho-api/start');
+      refresh();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to start sync');
+    }
+    setStarting(false);
+  }
+
+  const job = status?.job;
+  const running = job?.status === 'running';
+
+  return (
+    <div style={{ background: 'var(--bg-surface)', border: '2px solid var(--accent)', borderRadius: 12, padding: '20px 24px', marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <span style={{ fontSize: 24 }}>⚡</span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 16 }}>Sync directly from Zoho (recommended)</div>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            Pulls every customer (with all their shipping addresses), product, sales order, invoice, and shipment
+            via the Zoho API — records link exactly by Zoho's own IDs, no CSV matching. Safe to re-run: it updates
+            existing records instead of duplicating.
+          </div>
+        </div>
+        {status && !running && (
+          <button onClick={start} disabled={starting || !status.configured}
+            title={!status.configured ? 'Set the ZOHO_* variables in .env first' : ''}
+            style={{
+              background: status.configured ? 'var(--accent)' : 'var(--bg-elevated)',
+              color: status.configured ? '#fff' : 'var(--text-muted)',
+              border: 'none', borderRadius: 8, padding: '10px 24px', fontWeight: 600, fontSize: 14,
+              cursor: status.configured ? 'pointer' : 'default',
+            }}>
+            {starting ? 'Starting…' : 'Start Full Sync'}
+          </button>
+        )}
+      </div>
+
+      {status && !status.configured && (
+        <div style={{ fontSize: 13, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+          <strong>One-time setup:</strong> create a "Self Client" at <code>api-console.zoho.com</code>, generate a code with scopes
+          <code style={{ margin: '0 4px' }}>ZohoBooks.fullaccess.READ,ZohoInventory.FullAccess.READ</code>,
+          exchange it for a refresh token, then add <code>ZOHO_CLIENT_ID</code>, <code>ZOHO_CLIENT_SECRET</code>,{' '}
+          <code>ZOHO_REFRESH_TOKEN</code>, <code>ZOHO_ORG_ID</code> to your .env and restart. Full steps are in .env.example.
+        </div>
+      )}
+
+      {error && <div style={{ fontSize: 13, color: 'var(--danger)', marginTop: 8 }}>{error}</div>}
+
+      {job && (
+        <div style={{ marginTop: 12, fontSize: 13 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            {running ? (
+              <>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--accent)', animation: 'pulse 1.2s infinite' }} />
+                <strong>Syncing — {job.phase}</strong>
+                <span style={{ color: 'var(--text-muted)' }}>{job.progress}</span>
+              </>
+            ) : job.status === 'done' ? (
+              <strong style={{ color: 'var(--success)' }}>✓ Sync complete</strong>
+            ) : (
+              <strong style={{ color: 'var(--danger)' }}>✗ Sync failed</strong>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', color: 'var(--text-secondary)' }}>
+            {Object.entries(job.counts || {}).map(([k, v]) => (
+              <span key={k}>
+                <strong style={{ textTransform: 'capitalize' }}>{k}:</strong>{' '}
+                {Object.entries(v).map(([kk, vv]) => `${vv} ${kk}`).join(', ')}
+              </span>
+            ))}
+          </div>
+          {job.errors?.length > 0 && (
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ cursor: 'pointer', color: 'var(--warning)' }}>{job.errors.length} warning{job.errors.length !== 1 ? 's' : ''}</summary>
+              <ul style={{ margin: '6px 0 0 18px', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.8 }}>
+                {job.errors.slice(0, 50).map((e, i) => <li key={i}>{e}</li>)}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }`}</style>
+    </div>
+  );
+}
+
+// ─── Danger zone: wipe data ────────────────────────────────────────────────────
+function DangerZone() {
+  const [open, setOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [scope, setScope] = useState('orders');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState('');
+
+  async function purge() {
+    setBusy(true); setError(''); setResult(null);
+    try {
+      const { data } = await api.post('/import/purge', { confirm: confirmText, scope });
+      setResult(data);
+      setConfirmText('');
+    } catch (err) {
+      setError(err.response?.data?.message || 'Purge failed');
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ border: '1px solid var(--danger)', borderRadius: 12, padding: '16px 24px', marginTop: 32, background: 'var(--bg-surface)' }}>
+      <button onClick={() => setOpen(o => !o)} style={{ background: 'none', border: 'none', color: 'var(--danger)', fontWeight: 700, fontSize: 14, cursor: 'pointer', padding: 0 }}>
+        {open ? '▾' : '▸'} Danger zone — wipe imported data
+      </button>
+      {open && (
+        <div style={{ marginTop: 14, fontSize: 13 }}>
+          <p style={{ color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.6 }}>
+            Use this to start over before a clean re-import. <strong>This permanently deletes data</strong> — it cannot be undone.
+          </p>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="radio" checked={scope === 'orders'} onChange={() => setScope('orders')} />
+              Orders, invoices, shipments &amp; reminders only <span style={{ color: 'var(--text-muted)' }}>(keeps patients + products)</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+              <input type="radio" checked={scope === 'all'} onChange={() => setScope('all')} />
+              <span style={{ color: 'var(--danger)', fontWeight: 600 }}>Everything</span> <span style={{ color: 'var(--text-muted)' }}>(also patients, products, addresses)</span>
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <input placeholder='Type: DELETE ALL DATA' value={confirmText} onChange={e => setConfirmText(e.target.value)} style={{ width: 240 }} />
+            <button onClick={purge} disabled={busy || confirmText !== 'DELETE ALL DATA'}
+              style={{
+                background: confirmText === 'DELETE ALL DATA' ? 'var(--danger)' : 'var(--bg-elevated)',
+                color: confirmText === 'DELETE ALL DATA' ? '#fff' : 'var(--text-muted)',
+                border: 'none', borderRadius: 8, padding: '9px 20px', fontWeight: 700, fontSize: 13,
+                cursor: confirmText === 'DELETE ALL DATA' ? 'pointer' : 'default',
+              }}>
+              {busy ? 'Deleting…' : 'Permanently Delete'}
+            </button>
+          </div>
+          {error && <div style={{ color: 'var(--danger)', marginTop: 8 }}>{error}</div>}
+          {result && (
+            <div style={{ color: 'var(--success)', marginTop: 8 }}>
+              ✓ Deleted: {Object.entries(result.deleted).filter(([, n]) => n > 0).map(([t, n]) => `${n} ${t}`).join(', ') || 'nothing (already empty)'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const FILES = [
   {
@@ -164,10 +345,11 @@ export default function Import() {
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontFamily: 'var(--brand-serif)', fontSize: 28, marginBottom: 6 }}>Zoho Import</h1>
         <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
-          Import your existing customers, orders, invoices, and shipments from Zoho One.
-          Upload the CSV exports below — each file is optional; upload only what you have.
+          Sync directly from the Zoho API (best), or upload CSV exports below as a fallback.
         </p>
       </div>
+
+      <ZohoApiSync />
 
       {/* ── How to export ───────────────────────────────────────────────────── */}
       <details style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px', marginBottom: 20 }}>
@@ -315,6 +497,8 @@ export default function Import() {
           </button>
         </div>
       )}
+
+      <DangerZone />
     </div>
   );
 }

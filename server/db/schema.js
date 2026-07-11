@@ -26,6 +26,7 @@ const patients = pgTable('patients', {
   stripe_customer_id: text('stripe_customer_id'),
   stripe_default_pm: text('stripe_default_pm'),
   credit_balance: numeric('credit_balance', { precision: 10, scale: 2 }).notNull().default('0'),
+  zoho_id: text('zoho_id'),
   requires_prescription: boolean('requires_prescription').default(false),
   active_prescription_id: uuid('active_prescription_id'),
   password_hash: text('password_hash'),
@@ -55,6 +56,7 @@ const products = pgTable('products', {
   unit_price: numeric('unit_price', { precision: 10, scale: 2 }).notNull(),
   unit: text('unit'),
   active: boolean('active').default(true),
+  zoho_id: text('zoho_id'),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
 });
 
@@ -72,6 +74,7 @@ const sales_orders = pgTable('sales_orders', {
   // Staff-selected recipient address for this order; pre-fills the FedEx label modal
   // { address_id?, label?, street, street2?, city, state, zip, country }
   recipient_address: jsonb('recipient_address'),
+  zoho_id: text('zoho_id'),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
   updated_at: timestamp('updated_at', { withTimezone: true }).default(sql`now()`),
 });
@@ -110,6 +113,7 @@ const invoices = pgTable('invoices', {
   credit_applied: numeric('credit_applied', { precision: 10, scale: 2 }).notNull().default('0'),
   amount_paid: numeric('amount_paid', { precision: 10, scale: 2 }).notNull().default('0'),
   installments_allowed: boolean('installments_allowed').notNull().default(false),
+  zoho_id: text('zoho_id'),
   created_at: timestamp('created_at', { withTimezone: true }).default(sql`now()`),
   deleted_at: timestamp('deleted_at', { withTimezone: true }),
 });

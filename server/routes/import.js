@@ -1,13 +1,92 @@
 const express = require('express');
 const multer = require('multer');
 const { parse } = require('csv-parse/sync');
-const { db } = require('../db');
+const { db, pool } = require('../db');
 const { patients, products, sales_orders, order_items, invoices, shipments } = require('../db/schema');
 const { eq } = require('drizzle-orm');
-const { requireLogin } = require('../middleware/auth');
+const { requireLogin, requireRole } = require('../middleware/auth');
+const zoho = require('../services/zoho');
+const zohoSync = require('../services/zoho-sync');
 
 const router = express.Router();
 router.use(requireLogin);
+
+// ─── Zoho API sync ─────────────────────────────────────────────────────────────
+
+// GET /api/import/zoho-api/status — config check + current/last job state
+router.get('/zoho-api/status', (req, res) => {
+  return res.json({
+    configured: zoho.configured(),
+    job: zohoSync.getJob(),
+  });
+});
+
+// POST /api/import/zoho-api/start — kick off a background sync
+router.post('/zoho-api/start', requireRole('admin'), async (req, res) => {
+  try {
+    if (!zoho.configured()) {
+      return res.status(400).json({
+        error: 'NOT_CONFIGURED',
+        message: 'Set ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, and ZOHO_ORG_ID in .env, then restart the app.',
+      });
+    }
+    const job = await zohoSync.runSync();
+    return res.status(202).json({ ok: true, job });
+  } catch (err) {
+    return res.status(409).json({ error: 'SYNC_RUNNING', message: err.message });
+  }
+});
+
+// ─── Purge imported data (danger zone) ─────────────────────────────────────────
+// POST /api/import/purge  { confirm: 'DELETE ALL DATA', scope: 'orders'|'all' }
+// scope 'orders': wipes orders/invoices/shipments/reminders — keeps patients+products
+// scope 'all':    also wipes patients, products, addresses, contacts, prescriptions
+router.post('/purge', requireRole('admin'), async (req, res) => {
+  try {
+    const { confirm, scope } = req.body || {};
+    if (confirm !== 'DELETE ALL DATA') {
+      return res.status(400).json({ error: 'CONFIRM_REQUIRED', message: 'Type the confirmation phrase exactly to proceed.' });
+    }
+    if (!['orders', 'all'].includes(scope)) {
+      return res.status(400).json({ error: 'VALIDATION_ERROR', message: "scope must be 'orders' or 'all'." });
+    }
+
+    const deleted = {};
+    const wipe = async (table) => {
+      const r = await pool.query(`DELETE FROM ${table}`);
+      deleted[table] = r.rowCount || 0;
+    };
+
+    // FK-safe order
+    await wipe('shipment_events');
+    await wipe('shipments');
+    await wipe('invoice_payments');
+    await wipe('credit_ledger');
+    await wipe('invoices');
+    await wipe('order_items');
+    await wipe('refill_requests');
+    await wipe('reminder_logs');
+    await wipe('reminder_rules');
+    await wipe('sales_orders');
+
+    if (scope === 'all') {
+      await wipe('prescriptions');
+      await wipe('patient_contacts');
+      await wipe('patient_shipping_addresses');
+      // Kill customer portal sessions (their accounts are being removed)
+      const s = await pool.query(`DELETE FROM sessions WHERE sess->>'customerId' IS NOT NULL`);
+      deleted.customer_sessions = s.rowCount || 0;
+      await wipe('patients');
+      await wipe('products');
+    }
+
+    console.warn(`[PURGE] Admin ${req.session.adminEmail} wiped scope=${scope}:`, deleted);
+    return res.json({ ok: true, scope, deleted });
+  } catch (err) {
+    console.error('Purge error:', err);
+    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+  }
+});
 
 // Store files in memory — CSVs are small
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
