@@ -21,6 +21,7 @@ import PatientDetail from './pages/PatientDetail';
 import Products from './pages/Products';
 import Settings from './pages/Settings';
 import Import from './pages/Import';
+import Analytics from './pages/Analytics';
 import PayPage from './pages/PayPage';
 
 function RequireAuth({ children }) {
@@ -94,6 +95,7 @@ export default function App() {
           <Route path="products" element={<Products />} />
           <Route path="settings" element={<Settings />} />
           <Route path="import" element={<Import />} />
+          <Route path="analytics" element={<Analytics />} />
         </Route>
       </Routes>
     </BrowserRouter>

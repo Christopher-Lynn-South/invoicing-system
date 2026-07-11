@@ -154,6 +154,26 @@ export default function InvoiceDetail() {
               PDF ↗
             </a>
           )}
+          {data.pay_status === 'pending' && (
+            <button
+              onClick={async () => {
+                try {
+                  await api.patch(`/invoices/${id}`, { installments_allowed: !data.installments_allowed });
+                  addToast(data.installments_allowed ? 'Payment plan disabled' : 'Payment plan enabled — customer can now split into 2-3 payments', 'success');
+                  load();
+                } catch (err) {
+                  addToast(err.response?.data?.message || 'Failed', 'error');
+                }
+              }}
+              style={{
+                fontSize: 12, padding: '5px 14px', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+                border: `1px solid ${data.installments_allowed ? 'var(--success)' : 'var(--border)'}`,
+                color: data.installments_allowed ? 'var(--success)' : 'var(--text-muted)', background: 'none',
+              }}
+            >
+              {data.installments_allowed ? '✓ Payment Plan On' : 'Allow Payment Plan'}
+            </button>
+          )}
           {data.pay_status !== 'paid' && !TERMINAL_STATUSES.includes(data.pay_status) && (
             <>
               <button

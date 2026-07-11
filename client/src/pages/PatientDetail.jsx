@@ -92,6 +92,36 @@ export default function PatientDetail() {
     } catch { /* non-fatal */ }
   }
 
+  // Store credit
+  const [credits, setCredits] = useState(null); // { balance, ledger }
+  const [creditForm, setCreditForm] = useState({ amount: '', reason: '' });
+  const [creditSaving, setCreditSaving] = useState(false);
+  const [showLedger, setShowLedger] = useState(false);
+
+  async function loadCredits(patientId) {
+    try {
+      const { data } = await api.get(`/patients/${patientId}/credits`);
+      setCredits(data);
+    } catch { /* non-fatal */ }
+  }
+
+  async function submitCredit(e) {
+    e.preventDefault();
+    const amount = parseFloat(creditForm.amount);
+    if (!Number.isFinite(amount) || amount === 0) { addToast('Enter a non-zero amount (negative to deduct)', 'error'); return; }
+    if (!creditForm.reason.trim()) { addToast('Reason is required', 'error'); return; }
+    setCreditSaving(true);
+    try {
+      await api.post(`/patients/${id}/credits`, { amount, reason: creditForm.reason.trim() });
+      setCreditForm({ amount: '', reason: '' });
+      addToast('Credit updated', 'success');
+      loadCredits(id);
+    } catch (err) {
+      addToast(err.response?.data?.message || 'Failed to update credit', 'error');
+    }
+    setCreditSaving(false);
+  }
+
   async function saveShipAddr(e) {
     e.preventDefault();
     setShipAddrSaving(true);
@@ -175,6 +205,7 @@ export default function PatientDetail() {
     setPrescriptions(rxRes.data);
     setContacts(ctRes.data);
     loadShipAddrs(id);
+    loadCredits(id);
   }
 
   useEffect(() => { load(); fetchProducts(); }, [id]);
@@ -417,6 +448,58 @@ export default function PatientDetail() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Store Credit ─────────────────────────────────────────────────── */}
+        <div style={{ marginTop: 20, background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, padding: '16px 20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>Store Credit</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: parseFloat(credits?.balance || 0) > 0 ? 'var(--success)' : 'var(--text-muted)', fontFamily: 'var(--brand-mono)' }}>
+              ${parseFloat(credits?.balance || 0).toFixed(2)}
+            </div>
+          </div>
+          <form onSubmit={submitCredit} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Amount ($, negative to deduct)</div>
+              <input type="number" step="0.01" placeholder="25.00" value={creditForm.amount}
+                onChange={e => setCreditForm(f => ({ ...f, amount: e.target.value }))} style={{ width: 140 }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>Reason *</div>
+              <input placeholder="e.g. Referral bonus, goodwill for late shipment…" value={creditForm.reason}
+                onChange={e => setCreditForm(f => ({ ...f, reason: e.target.value }))} style={{ width: '100%' }} />
+            </div>
+            <button type="submit" disabled={creditSaving}
+              style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 7, padding: '8px 18px', fontWeight: 600, fontSize: 13, cursor: 'pointer', opacity: creditSaving ? 0.6 : 1 }}>
+              {creditSaving ? 'Saving…' : 'Apply'}
+            </button>
+          </form>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+            Credit is automatically applied to the patient's next invoice at checkout.
+          </div>
+          {credits?.ledger?.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <button type="button" onClick={() => setShowLedger(s => !s)}
+                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 12, cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                {showLedger ? 'Hide' : 'Show'} history ({credits.ledger.length})
+              </button>
+              {showLedger && (
+                <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', marginTop: 8 }}>
+                  <tbody>
+                    {credits.ledger.map(l => (
+                      <tr key={l.id} style={{ borderTop: '1px solid var(--border)' }}>
+                        <td style={{ padding: '6px 8px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(l.created_at)}</td>
+                        <td style={{ padding: '6px 8px', fontFamily: 'var(--brand-mono)', fontWeight: 600, color: parseFloat(l.amount) > 0 ? 'var(--success)' : 'var(--danger)', whiteSpace: 'nowrap' }}>
+                          {parseFloat(l.amount) > 0 ? '+' : ''}{parseFloat(l.amount).toFixed(2)}
+                        </td>
+                        <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{l.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
         </div>

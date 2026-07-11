@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/reminders', label: 'Reminders', icon: '🔔' },
   { to: '/patients', label: 'Patients', icon: '👤' },
   { to: '/products', label: 'Products', icon: '📦' },
+  { to: '/analytics', label: 'Analytics', icon: '📈' },
   { to: '/settings', label: 'Settings', icon: '⚙' },
   { to: '/import', label: 'Import', icon: '📥' },
 ];

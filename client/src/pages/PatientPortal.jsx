@@ -312,6 +312,47 @@ export default function PatientPortal() {
   }
 
   const [pauseError, setPauseError] = useState({}); // { [ruleId]: message }
+  const [prefError, setPrefError] = useState({});   // { [ruleId]: message }
+  const [prefBusy, setPrefBusy] = useState({});     // { [ruleId]: bool }
+
+  async function handleSnooze(rule, days) {
+    setPrefBusy(s => ({ ...s, [rule.id]: true }));
+    setPrefError(s => ({ ...s, [rule.id]: '' }));
+    try {
+      const { data } = await api.patch(`/customer/refills/${rule.id}/snooze`, { days });
+      setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, snooze_until: data.snooze_until } : r));
+    } catch (err) {
+      setPrefError(s => ({ ...s, [rule.id]: err.response?.data?.message || 'Could not snooze.' }));
+    } finally {
+      setPrefBusy(s => ({ ...s, [rule.id]: false }));
+    }
+  }
+
+  async function handleChannel(rule, channel) {
+    setPrefBusy(s => ({ ...s, [rule.id]: true }));
+    setPrefError(s => ({ ...s, [rule.id]: '' }));
+    try {
+      const { data } = await api.patch(`/customer/refills/${rule.id}/channel`, { channel });
+      setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, channel_pref: data.channel_pref } : r));
+    } catch (err) {
+      setPrefError(s => ({ ...s, [rule.id]: err.response?.data?.message || 'Could not update channel.' }));
+    } finally {
+      setPrefBusy(s => ({ ...s, [rule.id]: false }));
+    }
+  }
+
+  async function handleAutopay(rule) {
+    setPrefBusy(s => ({ ...s, [rule.id]: true }));
+    setPrefError(s => ({ ...s, [rule.id]: '' }));
+    try {
+      const { data } = await api.patch(`/customer/refills/${rule.id}/autopay`, { enabled: !rule.autopay });
+      setRefills(prev => prev.map(r => r.id === rule.id ? { ...r, autopay: data.autopay } : r));
+    } catch (err) {
+      setPrefError(s => ({ ...s, [rule.id]: err.response?.data?.message || 'Could not update autopay.' }));
+    } finally {
+      setPrefBusy(s => ({ ...s, [rule.id]: false }));
+    }
+  }
 
   async function handleTogglePause(rule) {
     setPauseLoading(s => ({ ...s, [rule.id]: true }));
@@ -647,6 +688,60 @@ export default function PatientPortal() {
                             </div>
                           )}
                         </div>
+                      </div>
+
+                      {/* ── Reminder settings footer ── */}
+                      <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 12, display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'center', fontSize: 12 }}>
+                        {/* Snooze */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Snooze:</span>
+                          {rule.snooze_until && rule.snooze_until >= new Date().toISOString().split('T')[0] ? (
+                            <>
+                              <span style={{ color: 'var(--warning)', fontWeight: 600 }}>until {rule.snooze_until}</span>
+                              <button onClick={() => handleSnooze(rule, 0)} disabled={!!prefBusy[rule.id]}
+                                style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 12, textDecoration: 'underline', padding: 0 }}>
+                                clear
+                              </button>
+                            </>
+                          ) : (
+                            [7, 14, 30].map(d => (
+                              <button key={d} onClick={() => handleSnooze(rule, d)} disabled={!!prefBusy[rule.id]}
+                                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 11, padding: '2px 8px' }}>
+                                {d === 7 ? '1 wk' : d === 14 ? '2 wks' : '1 mo'}
+                              </button>
+                            ))
+                          )}
+                        </div>
+
+                        {/* Channel */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Remind me by:</span>
+                          {['email', 'sms', 'both'].map(ch => (
+                            <button key={ch} onClick={() => handleChannel(rule, ch)} disabled={!!prefBusy[rule.id] || rule.channel_pref === ch}
+                              style={{
+                                background: rule.channel_pref === ch ? 'var(--accent)' : 'none',
+                                color: rule.channel_pref === ch ? '#fff' : 'var(--text-secondary)',
+                                border: `1px solid ${rule.channel_pref === ch ? 'var(--accent)' : 'var(--border)'}`,
+                                borderRadius: 5, cursor: 'pointer', fontSize: 11, padding: '2px 8px', textTransform: 'uppercase',
+                              }}>
+                              {ch}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Autopay */}
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginLeft: 'auto' }}
+                          title={!rule.has_saved_card && !rule.autopay ? 'Pay an invoice by card first to enable autopay' : ''}>
+                          <input type="checkbox" checked={!!rule.autopay} disabled={!!prefBusy[rule.id]}
+                            onChange={() => handleAutopay(rule)} />
+                          <span style={{ color: rule.autopay ? 'var(--success)' : 'var(--text-muted)', fontWeight: rule.autopay ? 600 : 400 }}>
+                            Autopay {rule.autopay ? 'on — ships automatically' : 'off'}
+                          </span>
+                        </label>
+
+                        {prefError[rule.id] && (
+                          <div style={{ width: '100%', fontSize: 11, color: 'var(--danger)' }}>{prefError[rule.id]}</div>
+                        )}
                       </div>
                     </div>
                   );

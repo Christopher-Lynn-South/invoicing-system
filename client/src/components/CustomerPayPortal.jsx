@@ -35,17 +35,46 @@ const METHOD_CARDS = [
   },
 ];
 
-function CardPayForm({ invoiceId, onSuccess }) {
+const CARD_BRAND_ICONS = { visa: 'Visa', mastercard: 'MC', amex: 'Amex', discover: 'Disc' };
+
+function CardPayForm({ invoiceId, installmentsAllowed, onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [savedMethods, setSavedMethods] = useState([]);
+  const [useNewCard, setUseNewCard] = useState(false);
+  const [payingSavedId, setPayingSavedId] = useState(null);
+  const [installments, setInstallments] = useState(null); // null | 2 | 3
+
+  // Load saved cards on mount
+  useEffect(() => {
+    api.get(`/api/pay/${invoiceId}/saved-methods`)
+      .then(r => setSavedMethods(r.data.methods || []))
+      .catch(() => setSavedMethods([]));
+  }, [invoiceId]);
+
+  async function payWithSaved(pmId) {
+    setPayingSavedId(pmId); setError('');
+    try {
+      await api.post(`/api/pay/${invoiceId}/pay-with-saved`, { payment_method_id: pmId });
+      onSuccess();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Charge failed — try entering your card manually.');
+      setPayingSavedId(null);
+    }
+  }
 
   async function handlePay() {
     if (!stripe || !elements) return;
     setLoading(true); setError('');
     try {
-      const { data } = await api.post(`/api/pay/${invoiceId}/intent`, { method: 'stripe_cc' });
+      const { data } = await api.post(`/api/pay/${invoiceId}/intent`, {
+        method: 'stripe_cc',
+        ...(installments ? { installments } : {}),
+      });
+      // Credit covered the whole balance — nothing to charge
+      if (data.paid_in_full_with_credit) { onSuccess(); return; }
       const result = await stripe.confirmCardPayment(data.client_secret, {
         payment_method: { card: elements.getElement(CardElement) },
       });
@@ -61,26 +90,99 @@ function CardPayForm({ invoiceId, onSuccess }) {
     }
   }
 
+  const showSaved = savedMethods.length > 0 && !useNewCard;
+
   return (
     <div>
-      <div style={{
-        border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px',
-        background: 'var(--bg-elevated)', marginBottom: 12,
-      }}>
-        <CardElement options={{
-          style: {
-            base: { color: '#e8eaf6', fontFamily: 'DM Sans, sans-serif', fontSize: '16px', '::placeholder': { color: '#5a6285' } },
-          },
-        }} />
-      </div>
-      {error && <p style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 10 }}>{error}</p>}
-      <button onClick={handlePay} disabled={loading || !stripe} style={{
-        width: '100%', background: 'var(--accent)', color: '#fff', border: 'none',
-        borderRadius: 8, padding: '12px', fontWeight: 700, fontSize: 15,
-        opacity: loading ? 0.7 : 1,
-      }}>
-        {loading ? 'Processing…' : 'Pay Now'}
-      </button>
+      {/* Installment choice */}
+      {installmentsAllowed && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 6 }}>Payment plan</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[null, 2, 3].map(n => (
+              <button key={String(n)} type="button" onClick={() => setInstallments(n)} style={{
+                flex: 1, padding: '8px 4px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                border: `2px solid ${installments === n ? 'var(--accent)' : 'var(--border)'}`,
+                borderRadius: 8, background: installments === n ? 'var(--accent-light)' : 'var(--bg-elevated)',
+                color: 'var(--text-primary)',
+              }}>
+                {n === null ? 'Pay in full' : `${n} payments`}
+              </button>
+            ))}
+          </div>
+          {installments && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+              You'll be charged 1/{installments} now. We'll email you to collect the remaining installments.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Saved cards — one-click */}
+      {showSaved ? (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 8 }}>Your saved cards</div>
+          {savedMethods.map(pm => (
+            <button key={pm.id} type="button" onClick={() => payWithSaved(pm.id)}
+              disabled={!!payingSavedId || !!installments}
+              title={installments ? 'Payment plans require entering the card manually' : ''}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8,
+                border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px',
+                background: 'var(--bg-elevated)', color: 'var(--text-primary)', cursor: 'pointer',
+                opacity: (payingSavedId && payingSavedId !== pm.id) || installments ? 0.5 : 1,
+                fontSize: 14,
+              }}>
+              <span style={{ fontWeight: 700, textTransform: 'capitalize' }}>{CARD_BRAND_ICONS[pm.brand] || pm.brand}</span>
+              <span style={{ fontFamily: 'var(--brand-mono)' }}>•••• {pm.last4}</span>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{pm.exp_month}/{pm.exp_year}</span>
+              {pm.is_default && <span style={{ fontSize: 11, color: 'var(--success)', fontWeight: 600 }}>Default</span>}
+              <span style={{ marginLeft: 'auto', fontWeight: 700, color: 'var(--accent)' }}>
+                {payingSavedId === pm.id ? 'Charging…' : 'Pay with this card →'}
+              </span>
+            </button>
+          ))}
+          <button type="button" onClick={() => setUseNewCard(true)} style={{
+            background: 'none', border: 'none', color: 'var(--accent)', fontSize: 13,
+            cursor: 'pointer', padding: 0, textDecoration: 'underline',
+          }}>
+            Use a different card
+          </button>
+          {error && <p style={{ color: 'var(--danger)', fontSize: 13, marginTop: 10 }}>{error}</p>}
+        </div>
+      ) : (
+        <>
+          <div style={{
+            border: '1px solid var(--border)', borderRadius: 8, padding: '12px 16px',
+            background: 'var(--bg-elevated)', marginBottom: 12,
+          }}>
+            <CardElement options={{
+              style: {
+                base: { color: '#e8eaf6', fontFamily: 'DM Sans, sans-serif', fontSize: '16px', '::placeholder': { color: '#5a6285' } },
+              },
+            }} />
+          </div>
+          {error && <p style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 10 }}>{error}</p>}
+          <button onClick={handlePay} disabled={loading || !stripe} style={{
+            width: '100%', background: 'var(--accent)', color: '#fff', border: 'none',
+            borderRadius: 8, padding: '12px', fontWeight: 700, fontSize: 15,
+            opacity: loading ? 0.7 : 1,
+          }}>
+            {loading ? 'Processing…' : installments ? `Pay 1st of ${installments} installments` : 'Pay Now'}
+          </button>
+          {savedMethods.length > 0 && (
+            <button type="button" onClick={() => setUseNewCard(false)} style={{
+              background: 'none', border: 'none', color: 'var(--accent)', fontSize: 13,
+              cursor: 'pointer', padding: 0, marginTop: 10, textDecoration: 'underline',
+            }}>
+              ← Back to saved cards
+            </button>
+          )}
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>
+            Your card is securely saved with Stripe for faster checkout next time.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -95,6 +197,8 @@ function ACHPayForm({ invoiceId, patient, onSuccess }) {
     setLoading(true); setError('');
     try {
       const { data } = await api.post(`/api/pay/${invoiceId}/intent`, { method: 'ach' });
+      // Credit covered the whole balance — nothing to collect
+      if (data.paid_in_full_with_credit) { onSuccess(); return; }
 
       // Step 1: open Stripe Financial Connections to collect bank account
       const collectResult = await stripe.collectBankAccountForPayment({
@@ -166,7 +270,10 @@ function USDCPayForm({ invoiceId, totalUSDC, onSuccess }) {
   const loadIntent = useCallback(() => {
     setWalletLoading(true); setWalletError('');
     api.post(`/api/pay/${invoiceId}/intent`, { method: 'usdc' })
-      .then(r => setWalletInfo(r.data))
+      .then(r => {
+        if (r.data.paid_in_full_with_credit) { onSuccess(); return; }
+        setWalletInfo(r.data);
+      })
       .catch(err => setWalletError(err.response?.data?.message || 'Could not load wallet info. Please try again.'))
       .finally(() => setWalletLoading(false));
   }, [invoiceId]);
@@ -207,8 +314,13 @@ function USDCPayForm({ invoiceId, totalUSDC, onSuccess }) {
         <div style={{ fontSize: 13 }}>
           <p style={{ color: 'var(--text-muted)', marginBottom: 6 }}>Send exactly:</p>
           <p style={{ fontFamily: 'var(--brand-mono)', fontSize: 18, fontWeight: 700, color: 'var(--success)', marginBottom: 10 }}>
-            {totalUSDC} USDC
+            {walletInfo.amount_usdc || totalUSDC} USDC
           </p>
+          {parseFloat(walletInfo.credit_applied || 0) > 0 && (
+            <p style={{ fontSize: 12, color: 'var(--success)', marginBottom: 8 }}>
+              ✓ ${walletInfo.credit_applied} store credit applied
+            </p>
+          )}
           <p style={{ color: 'var(--text-muted)', marginBottom: 4 }}>To wallet:</p>
           <p style={{ fontFamily: 'var(--brand-mono)', fontSize: 11, wordBreak: 'break-all', color: 'var(--text-primary)' }}>
             {walletInfo.wallet}
@@ -356,7 +468,7 @@ export default function PatientPayPortal({ invoice }) {
       {/* Payment form */}
       {stripe ? (
         <Elements stripe={stripe}>
-          {method === 'stripe_cc' && <CardPayForm invoiceId={invoice.id} onSuccess={onSuccess} />}
+          {method === 'stripe_cc' && <CardPayForm invoiceId={invoice.id} installmentsAllowed={!!invoice.installments_allowed} onSuccess={onSuccess} />}
           {method === 'ach' && <ACHPayForm invoiceId={invoice.id} patient={invoice.patient} onSuccess={onSuccess} />}
         </Elements>
       ) : (method === 'stripe_cc' || method === 'ach') ? (
