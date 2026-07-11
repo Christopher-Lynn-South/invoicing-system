@@ -245,17 +245,24 @@ router.get('/invoices/:id/detail', requireLogin, async (req, res) => {
 // Access guard: allow if admin session, customer session matches order.patient_id,
 // query token matches invoice pay_token AND unexpired, OR invoice's pay_token
 // itself is still within its 3-day validity window (legacy /pay/:invoiceId links).
-function invoiceAccessAllowed(req, invoice, order) {
-  if (req.session?.adminId) return true;
-  if (req.session?.customerId && order && order.patient_id === req.session.customerId) return true;
+// Returns: 'admin' | 'customer' | 'token' | 'legacy' | 'expired' | 'denied'
+function invoiceAccessLevel(req, invoice, order) {
+  if (req.session?.adminId) return 'admin';
+  if (req.session?.customerId && order && order.patient_id === req.session.customerId) return 'customer';
   const tokenQ = req.query?.token;
   if (tokenQ && invoice.pay_token && tokenQ === invoice.pay_token) {
-    if (invoice.pay_token_expires_at && new Date() <= new Date(invoice.pay_token_expires_at)) return true;
+    if (invoice.pay_token_expires_at && new Date() <= new Date(invoice.pay_token_expires_at)) return 'token';
+    return 'expired';
   }
-  // Legacy: allow anonymous access while the invoice's pay_token is still valid
-  if (invoice.pay_token && invoice.pay_token_expires_at &&
-      new Date() <= new Date(invoice.pay_token_expires_at)) return true;
-  return false;
+  if (invoice.pay_token && invoice.pay_token_expires_at) {
+    if (new Date() <= new Date(invoice.pay_token_expires_at)) return 'legacy';
+    return 'expired';
+  }
+  return 'denied';
+}
+function invoiceAccessAllowed(req, invoice, order) {
+  const lvl = invoiceAccessLevel(req, invoice, order);
+  return lvl === 'admin' || lvl === 'customer' || lvl === 'token' || lvl === 'legacy';
 }
 
 // GET /api/invoices/:id  (auth-gated; also allows valid pay-link window)
@@ -266,7 +273,11 @@ router.get('/invoices/:id', async (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
 
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
-    if (!invoiceAccessAllowed(req, invoice, order)) {
+    const lvl = invoiceAccessLevel(req, invoice, order);
+    if (lvl === 'expired') {
+      return res.status(410).json({ error: 'LINK_EXPIRED', message: 'This payment link has expired. Please contact us to receive a new one.' });
+    }
+    if (lvl === 'denied') {
       return res.status(404).json({ error: 'NOT_FOUND' });
     }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
@@ -158,14 +158,20 @@ function ACHPayForm({ invoiceId, patient, onSuccess }) {
 function USDCPayForm({ invoiceId, totalUSDC, onSuccess }) {
   const [txHash, setTxHash] = useState('');
   const [walletInfo, setWalletInfo] = useState(null);
+  const [walletLoading, setWalletLoading] = useState(true);
+  const [walletError, setWalletError] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
+  const loadIntent = useCallback(() => {
+    setWalletLoading(true); setWalletError('');
     api.post(`/api/pay/${invoiceId}/intent`, { method: 'usdc' })
       .then(r => setWalletInfo(r.data))
-      .catch(console.error);
+      .catch(err => setWalletError(err.response?.data?.message || 'Could not load wallet info. Please try again.'))
+      .finally(() => setWalletLoading(false));
   }, [invoiceId]);
+
+  useEffect(() => { loadIntent(); }, [loadIntent]);
 
   async function handleConfirm() {
     if (!txHash.trim()) return;
@@ -179,7 +185,18 @@ function USDCPayForm({ invoiceId, totalUSDC, onSuccess }) {
     }
   }
 
-  if (!walletInfo) return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>Loading wallet info…</div>;
+  if (walletLoading) return <div style={{ color: 'var(--text-muted)', padding: '16px 0' }}>Loading wallet info…</div>;
+  if (walletError || !walletInfo) return (
+    <div style={{ padding: '16px 0' }}>
+      <div style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 10 }}>
+        {walletError || 'Wallet info unavailable.'}
+      </div>
+      <button onClick={loadIntent} style={{
+        background: 'var(--accent)', color: '#fff', border: 'none',
+        borderRadius: 8, padding: '10px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+      }}>Try again</button>
+    </div>
+  );
 
   return (
     <div>
@@ -342,6 +359,17 @@ export default function PatientPayPortal({ invoice }) {
           {method === 'stripe_cc' && <CardPayForm invoiceId={invoice.id} onSuccess={onSuccess} />}
           {method === 'ach' && <ACHPayForm invoiceId={invoice.id} patient={invoice.patient} onSuccess={onSuccess} />}
         </Elements>
+      ) : (method === 'stripe_cc' || method === 'ach') ? (
+        <div style={{
+          background: 'var(--bg-elevated)', border: '1px solid var(--warning)',
+          borderRadius: 8, padding: '14px 18px', fontSize: 13, color: 'var(--text-secondary)',
+          lineHeight: 1.6,
+        }}>
+          <strong>Card and bank payments are temporarily unavailable.</strong>
+          <div style={{ marginTop: 6 }}>
+            Please choose USDC above, or reply to your invoice email — we'll help you pay another way.
+          </div>
+        </div>
       ) : null}
       {method === 'usdc' && <USDCPayForm invoiceId={invoice.id} totalUSDC={total.toFixed(2)} onSuccess={onSuccess} />}
     </div>

@@ -103,15 +103,18 @@ export default function PatientPortal() {
   const [invoices, setInvoices] = useState([]);
   const [shipments, setShipments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [tab, setTab] = useState('invoices');
 
   // Prescriptions
   const [rxList, setRxList] = useState(null);
   const [rxLoading, setRxLoading] = useState(false);
+  const [rxError, setRxError] = useState('');
 
   // Refills
   const [refills, setRefills] = useState(null);
   const [refillsLoading, setRefillsLoading] = useState(false);
+  const [refillsError, setRefillsError] = useState('');
   // Per-rule request state: { [ruleId]: 'idle' | 'loading' | 'sent' | 'error' }
   const [requestState, setRequestState] = useState({});
   // Per-rule pause state: optimistic active value
@@ -141,14 +144,21 @@ export default function PatientPortal() {
   const [cpError, setCpError] = useState('');
 
   const load = useCallback(() => {
-    setLoading(true);
+    setLoading(true); setLoadError('');
     Promise.all([
       api.get('/customer/invoices'),
       api.get('/customer/shipments'),
     ]).then(([inv, ship]) => {
       setInvoices(inv.data);
       setShipments(ship.data);
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).catch(err => {
+      if (err.response?.status === 401) {
+        // Session expired — send them back to login
+        window.location.href = '/login';
+        return;
+      }
+      setLoadError('We couldn\'t load your account right now. Please try again in a moment.');
+    }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -156,10 +166,10 @@ export default function PatientPortal() {
   // Lazy-load prescriptions when tab first opened
   useEffect(() => {
     if (tab === 'prescriptions' && rxList === null && !rxLoading) {
-      setRxLoading(true);
+      setRxLoading(true); setRxError('');
       api.get('/customer/prescriptions')
         .then(r => setRxList(r.data))
-        .catch(() => setRxList([]))
+        .catch(() => setRxError('Could not load prescriptions. Please try again.'))
         .finally(() => setRxLoading(false));
     }
   }, [tab, rxList, rxLoading]);
@@ -184,10 +194,10 @@ export default function PatientPortal() {
   // Lazy-load refills when tab first opened
   useEffect(() => {
     if (tab === 'refills' && refills === null && !refillsLoading) {
-      setRefillsLoading(true);
+      setRefillsLoading(true); setRefillsError('');
       api.get('/customer/refills')
         .then(r => setRefills(r.data))
-        .catch(() => setRefills([]))
+        .catch(() => setRefillsError('Could not load refill schedule. Please try again.'))
         .finally(() => setRefillsLoading(false));
     }
   }, [tab, refills, refillsLoading]);
@@ -354,7 +364,12 @@ export default function PatientPortal() {
                 Refresh
               </button>
             </div>
-            {invoices.length === 0 ? (
+            {loadError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{loadError}</div>
+                <button onClick={load} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
+            ) : invoices.length === 0 ? (
               <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No invoices yet.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -390,7 +405,12 @@ export default function PatientPortal() {
         {tab === 'shipments' && (
           <div>
             <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Your Shipments</h2>
-            {shipments.length === 0 ? (
+            {loadError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{loadError}</div>
+                <button onClick={load} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
+            ) : shipments.length === 0 ? (
               <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No shipments yet.</div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -420,6 +440,11 @@ export default function PatientPortal() {
             <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16 }}>Your Prescriptions</h2>
             {rxLoading ? (
               <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
+            ) : rxError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{rxError}</div>
+                <button onClick={() => { setRxList(null); setRxError(''); }} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
             ) : !rxList || rxList.length === 0 ? (
               <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No prescriptions on file.</div>
             ) : (
@@ -486,6 +511,11 @@ export default function PatientPortal() {
             </div>
             {refillsLoading ? (
               <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading…</div>
+            ) : refillsError ? (
+              <div style={{ background: '#fee2e2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ fontSize: 13, color: 'var(--danger)', flex: 1 }}>{refillsError}</div>
+                <button onClick={() => { setRefills(null); setRefillsError(''); }} style={{ background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Retry</button>
+              </div>
             ) : !refills || refills.length === 0 ? (
               <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>No refill schedule set up yet. Contact us to get started.</div>
             ) : (
@@ -562,7 +592,16 @@ export default function PatientPortal() {
                             reqStatus === 'sent' ? (
                               <span style={{ fontSize: 13, color: 'var(--success)' }}>Request sent ✓</span>
                             ) : reqStatus === 'error' ? (
-                              <span style={{ fontSize: 13, color: 'var(--danger)' }}>Failed — try again</span>
+                              <button
+                                onClick={() => handleRequestRefill(rule.id)}
+                                style={{
+                                  background: 'var(--danger)', color: '#fff', border: 'none',
+                                  borderRadius: 8, padding: '8px 16px', fontWeight: 600, fontSize: 13,
+                                  cursor: 'pointer', whiteSpace: 'nowrap',
+                                }}
+                              >
+                                Failed — try again
+                              </button>
                             ) : (
                               <button
                                 onClick={() => handleRequestRefill(rule.id)}

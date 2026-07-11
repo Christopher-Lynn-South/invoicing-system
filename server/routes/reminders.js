@@ -269,49 +269,163 @@ router.get('/shipments/exceptions', requireLogin, async (req, res) => {
   }
 });
 
-// Reorder link — GET /reorder/:ruleId  (mounted at /reorder in index.js)
-router.get('/:ruleId', requireLogin, async (req, res) => {
+// ─── Reorder link — /reorder/:ruleId (PUBLIC, mounted at /reorder) ────────────
+// Emailed to patients — must not require admin login. Two steps:
+//   GET  → confirmation page ("Yes, place my reorder")
+//   POST → creates a draft order and shows a success page
+// The rule UUID acts as an unguessable token; staff still get notified so
+// they'll review the draft before it ships.
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function esc(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function reorderPage(title, body) {
+  const company = esc(process.env.COMPANY_NAME || 'OrderFlow');
+  return `<!DOCTYPE html>
+<html><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${esc(title)}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;background:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{background:#fff;border-radius:12px;padding:36px 32px;max-width:500px;width:100%;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+    .center{text-align:center}
+    .icon{font-size:52px;margin-bottom:14px}
+    h1{font-size:22px;color:#111827;margin-bottom:8px}
+    p{color:#6b7280;font-size:14px;line-height:1.6;margin-bottom:8px}
+    .info{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin:16px 0;font-size:14px;line-height:1.7}
+    .btn{width:100%;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:10px;display:block;text-align:center;text-decoration:none}
+    .btn:hover{background:#15803d}
+    .footer{margin-top:24px;font-size:12px;color:#9ca3af;text-align:center}
+  </style>
+</head><body>
+  <div class="card">${body}<div class="footer">${company}</div></div>
+</body></html>`;
+}
+
+async function loadReorderRule(ruleId, res) {
+  if (!ruleId || !UUID_RE.test(ruleId)) {
+    res.status(400).send(reorderPage('Invalid Link',
+      `<div class="center"><div class="icon">⚠</div><h1>Invalid link</h1><p>This reorder link is malformed.</p></div>`));
+    return null;
+  }
+  const [rule] = await db.select().from(reminder_rules).where(eq(reminder_rules.id, ruleId));
+  if (!rule) {
+    res.status(404).send(reorderPage('Link Not Found',
+      `<div class="center"><div class="icon">🔍</div><h1>Link Not Found</h1><p>This reorder link is invalid.</p></div>`));
+    return null;
+  }
+  if (!rule.active) {
+    res.send(reorderPage('Reminder Paused',
+      `<div class="center"><div class="icon">⏸</div><h1>Reminder Paused</h1><p>These automatic refills have been paused. Contact us to resume.</p></div>`));
+    return null;
+  }
+  return rule;
+}
+
+// GET /reorder/:ruleId — show confirmation page
+router.get('/:ruleId', async (req, res) => {
   try {
-    const [rule] = await db.select().from(reminder_rules).where(eq(reminder_rules.id, req.params.ruleId));
-    if (!rule) return res.status(404).json({ error: 'NOT_FOUND' });
+    const rule = await loadReorderRule(req.params.ruleId, res);
+    if (!rule) return;
 
     const [product] = await db.select().from(products).where(eq(products.id, rule.product_id));
+    const [patient] = await db.select().from(patients).where(eq(patients.id, rule.patient_id));
+
+    return res.send(reorderPage('Place Reorder', `
+      <div class="center">
+        <div class="icon">📦</div>
+        <h1>Ready to Reorder?</h1>
+        <p>Hi ${esc(patient.name)}, click below to place a reorder for <strong>${esc(product.name)}</strong>.</p>
+      </div>
+      <div class="info">
+        <div><strong>Product:</strong> ${esc(product.name)}</div>
+        <div><strong>Interval:</strong> every ${esc(rule.interval_days)} days</div>
+      </div>
+      <form method="POST" action="/reorder/${esc(rule.id)}">
+        <button type="submit" class="btn">Yes, place my reorder</button>
+      </form>
+      <p style="text-align:center;font-size:12px;color:#9ca3af;margin-top:12px">
+        Our team will review the order and send you an invoice.
+      </p>
+    `));
+  } catch (err) {
+    console.error('Reorder GET error:', err);
+    return res.status(500).send(reorderPage('Error',
+      `<div class="center"><div class="icon">⚠</div><h1>Something went wrong</h1><p>Please contact us to place your reorder.</p></div>`));
+  }
+});
+
+// POST /reorder/:ruleId — create the draft order
+router.post('/:ruleId', async (req, res) => {
+  try {
+    const rule = await loadReorderRule(req.params.ruleId, res);
+    if (!rule) return;
+
+    const [product] = await db.select().from(products).where(eq(products.id, rule.product_id));
+    const [patient] = await db.select().from(patients).where(eq(patients.id, rule.patient_id));
     const unit_price = parseFloat(product.unit_price);
 
-    const year = new Date().getFullYear();
-    const prefix = `SO-${year}-`;
-    const result = await db.execute(
-      sql`SELECT order_number FROM sales_orders WHERE order_number LIKE ${prefix + '%'} ORDER BY order_number DESC LIMIT 1`
-    );
-    const rows = result.rows || result;
-    const order_number = rows.length
-      ? `${prefix}${String(parseInt(rows[0].order_number.split('-')[2], 10) + 1).padStart(3, '0')}`
-      : `${prefix}001`;
-
-    const [order] = await db.insert(sales_orders).values({
-      order_number,
-      patient_id: rule.patient_id,
-      status: 'draft',
-      notes: `Auto-generated reorder from reminder rule ${rule.id}`,
-    }).returning();
-
-    await db.insert(order_items).values({
-      order_id: order.id,
-      product_id: rule.product_id,
-      quantity: 1,
-      unit_price: unit_price.toFixed(2),
-      line_total: unit_price.toFixed(2),
-    });
+    // Atomic order + line-item create with retry on order_number collision
+    let order;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const year = new Date().getFullYear();
+      const prefix = `SO-${year}-`;
+      const result = await db.execute(sql`
+        SELECT order_number FROM sales_orders
+        WHERE order_number LIKE ${prefix + '%'}
+        ORDER BY (regexp_replace(order_number, '.*-', '')::bigint) DESC
+        LIMIT 1
+      `);
+      const rows = result.rows || result;
+      const order_number = rows.length
+        ? `${prefix}${String(parseInt(rows[0].order_number.split('-').pop(), 10) + 1).padStart(3, '0')}`
+        : `${prefix}001`;
+      try {
+        await db.transaction(async (tx) => {
+          [order] = await tx.insert(sales_orders).values({
+            order_number,
+            patient_id: rule.patient_id,
+            status: 'draft',
+            notes: `Patient-confirmed reorder from reminder ${rule.id}. Please review and send invoice.`,
+          }).returning();
+          await tx.insert(order_items).values({
+            order_id: order.id,
+            product_id: rule.product_id,
+            quantity: 1,
+            unit_price: unit_price.toFixed(2),
+            line_total: unit_price.toFixed(2),
+          });
+        });
+        break;
+      } catch (err) {
+        if (err.code !== '23505' || attempt === 4) throw err;
+        await new Promise(r => setTimeout(r, 10 + Math.random() * 40));
+      }
+    }
 
     await db.update(reminder_rules)
-      .set({ last_order_id: order.id })
+      .set({ last_order_id: order.id, last_reminded_at: new Date() })
       .where(eq(reminder_rules.id, rule.id));
 
-    const baseUrl = process.env.BASE_URL || 'http://localhost:3001';
-    return res.redirect(`${baseUrl}/orders/${order.id}`);
+    return res.send(reorderPage('Reorder Placed!', `
+      <div class="center">
+        <div class="icon">✅</div>
+        <h1>You're all set!</h1>
+        <p>Thank you, ${esc(patient.name)}! Your reorder for <strong>${esc(product.name)}</strong> has been received.</p>
+        <p style="margin-top:12px">We'll send an invoice to ${esc(patient.email)} shortly.</p>
+        <p style="margin-top:8px;font-size:12px;color:#9ca3af">Order ${esc(order.order_number)}</p>
+      </div>
+    `));
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'SERVER_ERROR' });
+    console.error('Reorder POST error:', err);
+    return res.status(500).send(reorderPage('Error',
+      `<div class="center"><div class="icon">⚠</div><h1>Something went wrong</h1><p>Please contact us to place your reorder.</p></div>`));
   }
 });
 
