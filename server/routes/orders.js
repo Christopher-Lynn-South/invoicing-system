@@ -25,16 +25,22 @@ const router = express.Router();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Race-safe: derive next number by numeric-sorting the trailing suffix, and
+// retry insert on unique-violation. Padding is applied at display width but
+// grows past 999 without wrap-around.
 async function generateOrderNumber() {
   const year = new Date().getFullYear();
   const prefix = `SO-${year}-`;
-  const result = await db.execute(
-    sql`SELECT order_number FROM sales_orders WHERE order_number LIKE ${prefix + '%'} ORDER BY order_number DESC LIMIT 1`
-  );
+  const result = await db.execute(sql`
+    SELECT order_number FROM sales_orders
+    WHERE order_number LIKE ${prefix + '%'}
+    ORDER BY (regexp_replace(order_number, '.*-', '')::bigint) DESC
+    LIMIT 1
+  `);
   const rows = result.rows || result;
   if (!rows.length) return `${prefix}001`;
   const last = rows[0].order_number;
-  const num = parseInt(last.split('-')[2], 10) + 1;
+  const num = parseInt(last.split('-').pop(), 10) + 1;
   return `${prefix}${String(num).padStart(3, '0')}`;
 }
 
@@ -102,14 +108,23 @@ router.post('/', requireLogin, validate(orderSchema), async (req, res) => {
       }
     }
 
-    const order_number = await generateOrderNumber();
-
-    const [order] = await db.insert(sales_orders).values({
-      order_number,
-      patient_id,
-      status: 'draft',
-      notes,
-    }).returning();
+    // Retry on unique-violation from concurrent order_number collisions
+    let order;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const order_number = await generateOrderNumber();
+      try {
+        [order] = await db.insert(sales_orders).values({
+          order_number,
+          patient_id,
+          status: 'draft',
+          notes,
+        }).returning();
+        break;
+      } catch (err) {
+        if (err.code !== '23505' || attempt === 4) throw err;
+        await new Promise(r => setTimeout(r, 10 + Math.random() * 40));
+      }
+    }
 
     const itemRows = items.map(item => {
       const product = productMap[item.product_id];
@@ -187,7 +202,7 @@ const recipientAddressSchema = z.object({
 const patchOrderSchema = z.object({
   patient_id:        z.string().uuid().optional(),
   notes:             z.string().max(5000).optional(),
-  recipient_address: recipientAddressSchema.optional(),
+  recipient_address: recipientAddressSchema.nullable().optional(),
 }).strict().refine(d => Object.keys(d).length > 0, { message: 'Provide at least one field to update.' });
 
 router.patch('/:id', requireLogin, async (req, res) => {
@@ -267,8 +282,12 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
       recipient_name, recipient_street, recipient_city, recipient_state,
       recipient_zip, recipient_country } = req.validated;
 
-    // Prefer shipping_address; fall back to billing_address
-    const addr = patient.shipping_address || patient.billing_address || {};
+    // Address priority (each field independent):
+    //   1. explicit form fields on the ship request
+    //   2. order.recipient_address (staff-selected on order page)
+    //   3. patient.shipping_address / billing_address
+    const orderAddr = order.recipient_address || {};
+    const patientAddr = patient.shipping_address || patient.billing_address || {};
     const labelResult = await fedexService.createShipment({
       service_type: service,
       box_type,
@@ -279,11 +298,11 @@ router.post('/:id/ship', requireLogin, validate(shipSchema), async (req, res) =>
       recipient: {
         name:    recipient_name    || patient.name,
         phone:   patient.phone     || undefined,
-        street:  recipient_street  || addr.street  || '',
-        city:    recipient_city    || addr.city    || '',
-        state:   recipient_state   || addr.state   || '',
-        zip:     recipient_zip     || addr.zip     || '',
-        country: recipient_country || addr.country || 'US',
+        street:  recipient_street  || orderAddr.street  || patientAddr.street  || '',
+        city:    recipient_city    || orderAddr.city    || patientAddr.city    || '',
+        state:   recipient_state   || orderAddr.state   || patientAddr.state   || '',
+        zip:     recipient_zip     || orderAddr.zip     || patientAddr.zip     || '',
+        country: recipient_country || orderAddr.country || patientAddr.country || 'US',
       },
     });
 
@@ -616,11 +635,15 @@ router.patch('/:id/items', requireLogin, validate(updateItemsSchema), async (req
 
     const insertedItems = await db.insert(order_items).values(itemRows).returning();
 
-    // Recalculate invoice and regenerate PDF if invoice exists
+    // Recalculate invoice and regenerate PDF if invoice exists.
+    // Mirror invoice creation math: subtotal is grossed up by 3.9% (CC baked in),
+    // total = subtotal + shipping_charge + processing_fee.
     if (invoice) {
-      const subtotal = insertedItems.reduce((sum, i) => sum + parseFloat(i.line_total), 0);
+      const rawSubtotal = insertedItems.reduce((sum, i) => sum + parseFloat(i.line_total), 0);
+      const subtotal = Math.round(rawSubtotal * 1.039 * 100) / 100;
+      const shipping = parseFloat(invoice.shipping_charge || 0);
       const fee = parseFloat(invoice.processing_fee || 0);
-      const total = (subtotal + fee).toFixed(2);
+      const total = (subtotal + shipping + fee).toFixed(2);
 
       const [updatedInvoice] = await db.update(invoices)
         .set({ subtotal: subtotal.toFixed(2), total, updated_at: new Date() })

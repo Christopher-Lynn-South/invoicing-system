@@ -16,7 +16,7 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     const [user] = await db
       .select()
       .from(admin_users)
-      .where(eq(admin_users.email, email))
+      .where(eq(admin_users.email, String(email).trim().toLowerCase()))
       .limit(1);
 
     if (!user) {
@@ -27,6 +27,11 @@ router.post('/login', validate(loginSchema), async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' });
     }
+
+    // Regenerate session ID on login to prevent session fixation
+    await new Promise((resolve, reject) => {
+      req.session.regenerate(err => err ? reject(err) : resolve());
+    });
 
     req.session.adminId    = user.id;
     req.session.adminEmail = user.email;
@@ -120,7 +125,7 @@ router.post('/users', requireRole('admin'), async (req, res) => {
     const hash = await bcrypt.hash(password, 12);
     const [created] = await db
       .insert(admin_users)
-      .values({ email, name, password_hash: hash, role })
+      .values({ email: String(email).trim().toLowerCase(), name: String(name).trim(), password_hash: hash, role })
       .returning({ id: admin_users.id, email: admin_users.email, name: admin_users.name, role: admin_users.role });
     return res.status(201).json(created);
   } catch (err) {

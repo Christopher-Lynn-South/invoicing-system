@@ -13,14 +13,31 @@ const router = express.Router();
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+// HTML-escape values interpolated into raw HTML pages (prevents stored XSS
+// from patient names / product names / etc. that come from Zoho imports).
+function esc(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Only accept URL-safe token characters. Prevents attribute-break attacks
+// via a crafted token in URLs that get echoed into HTML.
+function safeToken(t) {
+  return typeof t === 'string' && /^[a-zA-Z0-9_-]{16,128}$/.test(t) ? t : '';
+}
+
 function htmlPage(title, body) {
-  const company = process.env.COMPANY_NAME || 'OrderFlow';
+  const company = esc(process.env.COMPANY_NAME || 'OrderFlow');
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${title}</title>
+  <title>${esc(title)}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:Arial,sans-serif;background:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
@@ -93,7 +110,7 @@ async function loadPendingRequest(token, res) {
       <div class="center">
         <div class="icon">✅</div>
         <h1>Already Confirmed!</h1>
-        <p>Your ${product.name} refill request was received. Our team will send an invoice to ${patient.email} shortly.</p>
+        <p>Your ${esc(product.name)} refill request was received. Our team will send an invoice to ${esc(patient.email)} shortly.</p>
       </div>
     `));
     return null;
@@ -104,7 +121,10 @@ async function loadPendingRequest(token, res) {
 // ── GET /refill/confirm/:token — show address review form ──────────────────────
 router.get('/confirm/:token', async (req, res) => {
   try {
-    const request = await loadPendingRequest(req.params.token, res);
+    const token = safeToken(req.params.token);
+    if (!token) return res.status(400).send(htmlPage('Invalid Link', `<div class="center"><div class="icon">⚠</div><h1>Invalid link</h1></div>`));
+
+    const request = await loadPendingRequest(token, res);
     if (!request) return;
 
     const [patient] = await db.select().from(patients).where(eq(patients.id, request.patient_id));
@@ -112,46 +132,44 @@ router.get('/confirm/:token', async (req, res) => {
 
     const addr = request.ship_address || {};
     const shipDateLabel = request.proposed_ship_date
-      ? `Proposed ship date: <strong>${request.proposed_ship_date}</strong>`
+      ? `Proposed ship date: <strong>${esc(request.proposed_ship_date)}</strong>`
       : 'Ship date to be confirmed';
-
-    const v = (val) => (val || '').replace(/"/g, '&quot;');
 
     return res.send(htmlPage('Confirm Your Refill', `
       <div class="center">
         <div class="icon">📦</div>
         <h1>Confirm Your Refill</h1>
-        <p>Hi <strong>${patient.name}</strong>, please review your shipping address for your <strong>${product.name}</strong> refill, then confirm below.</p>
+        <p>Hi <strong>${esc(patient.name)}</strong>, please review your shipping address for your <strong>${esc(product.name)}</strong> refill, then confirm below.</p>
       </div>
 
       <div class="ship-date">🚚 ${shipDateLabel} · FedEx Priority Overnight</div>
 
-      <form method="POST" action="/refill/confirm/${req.params.token}">
+      <form method="POST" action="/refill/confirm/${esc(token)}">
         <h2>Shipping Address</h2>
 
         <label>Street Address</label>
-        <input type="text" name="street" value="${v(addr.street)}" required placeholder="123 Main St" />
+        <input type="text" name="street" value="${esc(addr.street)}" required placeholder="123 Main St" />
 
         <label>Apt / Suite / Unit <span style="font-weight:400;text-transform:none">(optional)</span></label>
-        <input type="text" name="street2" value="${v(addr.street2)}" placeholder="Apt 4B" />
+        <input type="text" name="street2" value="${esc(addr.street2)}" placeholder="Apt 4B" />
 
         <div class="row3">
           <div>
             <label>City</label>
-            <input type="text" name="city" value="${v(addr.city)}" required placeholder="City" />
+            <input type="text" name="city" value="${esc(addr.city)}" required placeholder="City" />
           </div>
           <div>
             <label>State</label>
-            <input type="text" name="state" value="${v(addr.state)}" required placeholder="CA" maxlength="2" />
+            <input type="text" name="state" value="${esc(addr.state)}" required placeholder="CA" maxlength="2" />
           </div>
           <div>
             <label>ZIP</label>
-            <input type="text" name="zip" value="${v(addr.zip)}" required placeholder="90210" maxlength="10" />
+            <input type="text" name="zip" value="${esc(addr.zip)}" required placeholder="90210" maxlength="10" />
           </div>
         </div>
 
         <label>Country</label>
-        <input type="text" name="country" value="${v(addr.country) || 'US'}" required placeholder="US" maxlength="3" />
+        <input type="text" name="country" value="${esc(addr.country || 'US')}" required placeholder="US" maxlength="3" />
 
         <button type="submit" class="btn-confirm">✓ Confirm Refill &amp; Address</button>
       </form>
@@ -167,7 +185,10 @@ router.get('/confirm/:token', async (req, res) => {
 // ── POST /refill/confirm/:token — save address + create draft order ────────────
 router.post('/confirm/:token', async (req, res) => {
   try {
-    const request = await loadPendingRequest(req.params.token, res);
+    const token = safeToken(req.params.token);
+    if (!token) return res.status(400).send(htmlPage('Invalid Link', `<div class="center"><div class="icon">⚠</div><h1>Invalid link</h1></div>`));
+
+    const request = await loadPendingRequest(token, res);
     if (!request) return;
 
     const [patient] = await db.select().from(patients).where(eq(patients.id, request.patient_id));
@@ -236,19 +257,19 @@ router.post('/confirm/:token', async (req, res) => {
       ship_address.street2,
       [ship_address.city, ship_address.state, ship_address.zip].filter(Boolean).join(', '),
       ship_address.country !== 'US' ? ship_address.country : null,
-    ].filter(Boolean).join('<br>');
+    ].filter(Boolean).map(esc).join('<br>');
 
     return res.send(htmlPage('Refill Confirmed!', `
       <div class="center">
         <div class="icon">✅</div>
         <h1>You're all set!</h1>
-        <p>Thank you, <strong>${patient.name}</strong>! Your <strong>${product.name}</strong> refill has been confirmed.</p>
+        <p>Thank you, <strong>${esc(patient.name)}</strong>! Your <strong>${esc(product.name)}</strong> refill has been confirmed.</p>
       </div>
       <hr class="divider">
       <h2>Shipping to</h2>
       <div class="addr-box">${addrLines}</div>
-      <p style="margin-top:12px">Our team will review your order and send an invoice to <strong>${patient.email}</strong> shortly.</p>
-      <p style="margin-top:8px;font-size:12px;color:#9ca3af">Order ${order.order_number}</p>
+      <p style="margin-top:12px">Our team will review your order and send an invoice to <strong>${esc(patient.email)}</strong> shortly.</p>
+      <p style="margin-top:8px;font-size:12px;color:#9ca3af">Order ${esc(order.order_number)}</p>
     `));
 
   } catch (err) {
@@ -261,8 +282,11 @@ router.post('/confirm/:token', async (req, res) => {
 // ── GET /refill/decline/:token ─────────────────────────────────────────────────
 router.get('/decline/:token', async (req, res) => {
   try {
+    const token = safeToken(req.params.token);
+    if (!token) return res.status(400).send(htmlPage('Invalid Link', `<div class="center"><div class="icon">⚠</div><h1>Invalid link</h1></div>`));
+
     const [request] = await db.select().from(refill_requests)
-      .where(eq(refill_requests.token, req.params.token));
+      .where(eq(refill_requests.token, token));
 
     if (!request) {
       return res.status(404).send(htmlPage('Link Not Found',

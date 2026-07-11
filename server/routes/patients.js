@@ -237,8 +237,12 @@ router.put('/:id/prescriptions/:rxId', requireLogin, async (req, res) => {
     for (const key of allowed) {
       if (req.body[key] !== undefined) update[key] = req.body[key];
     }
+    // Ownership check: prescription must belong to this patient.
     const [row] = await db.update(prescriptions).set(update)
-      .where(eq(prescriptions.id, req.params.rxId))
+      .where(and(
+        eq(prescriptions.id, req.params.rxId),
+        eq(prescriptions.patient_id, req.params.id),
+      ))
       .returning();
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
     return res.json(row);
@@ -252,7 +256,10 @@ router.put('/:id/prescriptions/:rxId', requireLogin, async (req, res) => {
 router.delete('/:id/prescriptions/:rxId', requireLogin, async (req, res) => {
   try {
     const [row] = await db.update(prescriptions).set({ status: 'superseded' })
-      .where(eq(prescriptions.id, req.params.rxId))
+      .where(and(
+        eq(prescriptions.id, req.params.rxId),
+        eq(prescriptions.patient_id, req.params.id),
+      ))
       .returning();
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
     return res.json({ ok: true });
@@ -297,13 +304,24 @@ router.post('/:id/contacts', requireLogin, validate(contactSchema), async (req, 
 // PUT /api/patients/:id/contacts/:contactId
 router.put('/:id/contacts/:contactId', requireLogin, validate(contactSchema.partial()), async (req, res) => {
   try {
+    // Verify contact belongs to this patient before doing anything else.
+    const [existing] = await db.select({ id: patient_contacts.id }).from(patient_contacts)
+      .where(and(
+        eq(patient_contacts.id, req.params.contactId),
+        eq(patient_contacts.patient_id, req.params.id),
+      )).limit(1);
+    if (!existing) return res.status(404).json({ error: 'NOT_FOUND' });
+
     if (req.validated.is_primary) {
       await db.update(patient_contacts)
         .set({ is_primary: false })
         .where(eq(patient_contacts.patient_id, req.params.id));
     }
     const [row] = await db.update(patient_contacts).set(req.validated)
-      .where(eq(patient_contacts.id, req.params.contactId))
+      .where(and(
+        eq(patient_contacts.id, req.params.contactId),
+        eq(patient_contacts.patient_id, req.params.id),
+      ))
       .returning();
     if (!row) return res.status(404).json({ error: 'NOT_FOUND' });
     return res.json(row);
@@ -316,7 +334,13 @@ router.put('/:id/contacts/:contactId', requireLogin, validate(contactSchema.part
 // DELETE /api/patients/:id/contacts/:contactId
 router.delete('/:id/contacts/:contactId', requireLogin, async (req, res) => {
   try {
-    await db.delete(patient_contacts).where(eq(patient_contacts.id, req.params.contactId));
+    const result = await db.delete(patient_contacts)
+      .where(and(
+        eq(patient_contacts.id, req.params.contactId),
+        eq(patient_contacts.patient_id, req.params.id),
+      ))
+      .returning({ id: patient_contacts.id });
+    if (!result.length) return res.status(404).json({ error: 'NOT_FOUND' });
     return res.json({ ok: true });
   } catch (err) {
     console.error(err);

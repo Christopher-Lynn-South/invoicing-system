@@ -21,7 +21,7 @@ router.post('/login', async (req, res) => {
     const [patient] = await db
       .select()
       .from(patients)
-      .where(eq(patients.email, email))
+      .where(eq(patients.email, String(email).trim().toLowerCase()))
       .limit(1);
 
     if (!patient || !patient.portal_enabled || !patient.password_hash) {
@@ -32,6 +32,11 @@ router.post('/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Invalid email or password.' });
     }
+
+    // Regenerate session ID on login to prevent session fixation
+    await new Promise((resolve, reject) => {
+      req.session.regenerate(err => err ? reject(err) : resolve());
+    });
 
     req.session.customerId    = patient.id;
     req.session.customerEmail = patient.email;

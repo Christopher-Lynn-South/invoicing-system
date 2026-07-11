@@ -26,16 +26,21 @@ const router = express.Router();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// Numeric-sort the trailing suffix so 1000 comes AFTER 999.
+// Callers should retry on unique-violation from concurrent inserts.
 async function generateInvoiceNumber() {
   const year = new Date().getFullYear();
   const prefix = `INV-${year}-`;
-  const result = await db.execute(
-    sql`SELECT invoice_number FROM invoices WHERE invoice_number LIKE ${prefix + '%'} ORDER BY invoice_number DESC LIMIT 1`
-  );
+  const result = await db.execute(sql`
+    SELECT invoice_number FROM invoices
+    WHERE invoice_number LIKE ${prefix + '%'}
+    ORDER BY (regexp_replace(invoice_number, '.*-', '')::bigint) DESC
+    LIMIT 1
+  `);
   const rows = result.rows || result;
   if (!rows.length) return `${prefix}001`;
   const last = rows[0].invoice_number;
-  const num = parseInt(last.split('-')[2], 10) + 1;
+  const num = parseInt(last.split('-').pop(), 10) + 1;
   return `${prefix}${String(num).padStart(3, '0')}`;
 }
 
@@ -68,21 +73,32 @@ router.post('/orders/:orderId/invoice', requireLogin, async (req, res) => {
     // Always gross up by 3.9% — this is the CC price baked into line items
     const subtotal = Math.round(baseSubtotal * 1.039 * 100) / 100;
     const shipping_charge = order.shipping_quote?.net_charge ? parseFloat(order.shipping_quote.net_charge) : 0;
-    const invoice_number = await generateInvoiceNumber();
     const due_date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    const [invoice] = await db.insert(invoices).values({
-      invoice_number,
-      order_id: order.id,
-      subtotal: subtotal.toFixed(2),
-      shipping_charge: shipping_charge.toFixed(2),
-      processing_fee: '0.00',
-      total: (subtotal + shipping_charge).toFixed(2),
-      pay_status: 'pending',
-      due_date,
-      pay_token: generatePayToken(),
-      pay_token_expires_at: payTokenExpiresAt(3),
-    }).returning();
+    // Retry on unique-violation from concurrent invoice_number collisions
+    let invoice;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const invoice_number = await generateInvoiceNumber();
+      try {
+        [invoice] = await db.insert(invoices).values({
+          invoice_number,
+          order_id: order.id,
+          subtotal: subtotal.toFixed(2),
+          shipping_charge: shipping_charge.toFixed(2),
+          processing_fee: '0.00',
+          total: (subtotal + shipping_charge).toFixed(2),
+          pay_status: 'pending',
+          due_date,
+          pay_token: generatePayToken(),
+          pay_token_expires_at: payTokenExpiresAt(3),
+        }).returning();
+        break;
+      } catch (err) {
+        if (err.code !== '23505' || attempt === 4) throw err;
+        // brief jittered backoff and try again with a fresh number
+        await new Promise(r => setTimeout(r, 10 + Math.random() * 40));
+      }
+    }
 
     // Update order status
     await db.update(sales_orders)
@@ -220,7 +236,23 @@ router.get('/invoices/:id/detail', requireLogin, async (req, res) => {
   }
 });
 
-// GET /api/invoices/:id  (PUBLIC — no auth required)
+// Access guard: allow if admin session, customer session matches order.patient_id,
+// query token matches invoice pay_token AND unexpired, OR invoice's pay_token
+// itself is still within its 3-day validity window (legacy /pay/:invoiceId links).
+function invoiceAccessAllowed(req, invoice, order) {
+  if (req.session?.adminId) return true;
+  if (req.session?.customerId && order && order.patient_id === req.session.customerId) return true;
+  const tokenQ = req.query?.token;
+  if (tokenQ && invoice.pay_token && tokenQ === invoice.pay_token) {
+    if (invoice.pay_token_expires_at && new Date() <= new Date(invoice.pay_token_expires_at)) return true;
+  }
+  // Legacy: allow anonymous access while the invoice's pay_token is still valid
+  if (invoice.pay_token && invoice.pay_token_expires_at &&
+      new Date() <= new Date(invoice.pay_token_expires_at)) return true;
+  return false;
+}
+
+// GET /api/invoices/:id  (auth-gated; also allows valid pay-link window)
 router.get('/invoices/:id', async (req, res) => {
   try {
     const [invoice] = await db.select().from(invoices)
@@ -228,6 +260,10 @@ router.get('/invoices/:id', async (req, res) => {
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
 
     const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+    if (!invoiceAccessAllowed(req, invoice, order)) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
+
     const [patient] = await db.select().from(patients).where(eq(patients.id, order.patient_id));
     const items = await db.select({
       item: order_items,
@@ -238,7 +274,7 @@ router.get('/invoices/:id', async (req, res) => {
       .leftJoin(products, eq(order_items.product_id, products.id))
       .where(eq(order_items.order_id, order.id));
 
-    // Omit sensitive patient data for public endpoint
+    // Omit sensitive patient data unless authenticated
     const publicPatient = {
       name: patient.name,
       email: patient.email,
@@ -266,16 +302,28 @@ router.patch('/invoices/:id', requireLogin, async (req, res) => {
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
 
+    const [order] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+
     const updates = {};
     if (pay_status !== undefined) {
       if (!VALID_STATUSES.includes(pay_status)) {
         return res.status(400).json({ error: 'INVALID_STATUS', message: `pay_status must be one of: ${VALID_STATUSES.join(', ')}` });
       }
+
+      // Reject changes that would revert an already-shipped/delivered order
+      const orderIsShipped = order && ['shipped', 'delivered'].includes(order.status);
+      const wouldDowngrade = invoice.pay_status === 'paid' && pay_status !== 'paid';
+      if (orderIsShipped && wouldDowngrade) {
+        return res.status(400).json({
+          error: 'ORDER_SHIPPED',
+          message: 'Cannot change pay_status on an invoice whose order has already shipped. Issue a refund via Stripe / bank instead.',
+        });
+      }
+
       updates.pay_status = pay_status;
+      // Only set paid_at when transitioning to paid. Never null it — keep audit trail.
       if (pay_status === 'paid' && !invoice.paid_at) {
         updates.paid_at = new Date();
-      } else if (pay_status !== 'paid') {
-        updates.paid_at = null;
       }
     }
 
@@ -284,8 +332,9 @@ router.patch('/invoices/:id', requireLogin, async (req, res) => {
       .where(eq(invoices.id, invoice.id))
       .returning();
 
-    // Sync sales order status when payment status changes
-    if (pay_status !== undefined) {
+    // Sync sales order status when payment status changes — but NEVER downgrade
+    // an order that's already shipped/delivered.
+    if (pay_status !== undefined && order && !['shipped', 'delivered'].includes(order.status)) {
       let orderStatus;
       if (pay_status === 'paid') orderStatus = 'paid';
       else if (pay_status === 'voided' || pay_status === 'cancelled') orderStatus = 'cancelled';
@@ -298,7 +347,7 @@ router.patch('/invoices/:id', requireLogin, async (req, res) => {
     return res.json(updated);
   } catch (err) {
     console.error('Invoice PATCH error:', err);
-    return res.status(500).json({ error: 'SERVER_ERROR', message: err.message });
+    return res.status(500).json({ error: 'SERVER_ERROR' });
   }
 });
 
@@ -362,6 +411,11 @@ router.get('/invoices/:id/pdf', async (req, res) => {
   try {
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, req.params.id));
     if (!invoice) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    const [orderForAccess] = await db.select().from(sales_orders).where(eq(sales_orders.id, invoice.order_id));
+    if (!invoiceAccessAllowed(req, invoice, orderForAccess)) {
+      return res.status(404).json({ error: 'NOT_FOUND' });
+    }
 
     const invoicesDir = path.join(__dirname, '../../uploads/invoices');
     const pdfPath = path.join(invoicesDir, `${invoice.id}.pdf`);

@@ -28,16 +28,16 @@ const TRANSFER_ABI = [
 
 /**
  * Check one network for a valid USDC transfer to the merchant wallet.
- * Returns true if found, false otherwise.
+ * Returns { found: true, blockTimestamp, amountUSD, from } or { found: false }.
  */
 async function checkNetwork(network, txHash, expectedUSD, merchantWallet) {
   const rpcUrl = process.env[network.envKey];
-  if (!rpcUrl) return false;
+  if (!rpcUrl) return { found: false };
 
   try {
     const provider = new ethers.JsonRpcProvider(rpcUrl);
     const receipt = await provider.getTransactionReceipt(txHash);
-    if (!receipt || receipt.status !== 1) return false;
+    if (!receipt || receipt.status !== 1) return { found: false };
 
     const iface = new ethers.Interface(TRANSFER_ABI);
     const contracts = network.contracts.map(c => c.toLowerCase());
@@ -57,29 +57,38 @@ async function checkNetwork(network, txHash, expectedUSD, merchantWallet) {
         if (to !== merchantWallet.toLowerCase()) continue;
 
         const usdAmount = parseFloat(ethers.formatUnits(parsed.args.value, network.decimals));
-        if (usdAmount >= expectedUSD - 0.01) return true;
+        if (usdAmount >= expectedUSD - 0.01) {
+          const block = await provider.getBlock(receipt.blockNumber);
+          return {
+            found: true,
+            blockTimestamp: block ? new Date(Number(block.timestamp) * 1000) : null,
+            amountUSD: usdAmount,
+            from: parsed.args.from.toLowerCase(),
+            blockNumber: receipt.blockNumber,
+          };
+        }
       }
     }
 
-    return false;
+    return { found: false };
   } catch (err) {
     console.error(`USDC verification error on ${network.name}:`, err.message);
-    return false;
+    return { found: false };
   }
 }
 
 /**
  * Verify a USDC transfer on Polygon (preferred) or Ethereum mainnet.
- * Returns { verified: true, network: 'polygon'|'ethereum' } or { verified: false }.
- * Polygon is tried first.
+ * Returns { verified: true, network, blockTimestamp, amountUSD, from, blockNumber }
+ *      or { verified: false }.
  */
 async function verifyUSDCTransaction(txHash, expectedUSD) {
   const merchantWallet = process.env.MERCHANT_USDC_WALLET;
   if (!merchantWallet) throw new Error('MERCHANT_USDC_WALLET not configured');
 
   for (const network of NETWORKS) {
-    const found = await checkNetwork(network, txHash, expectedUSD, merchantWallet);
-    if (found) return { verified: true, network: network.name };
+    const result = await checkNetwork(network, txHash, expectedUSD, merchantWallet);
+    if (result.found) return { verified: true, network: network.name, ...result };
   }
 
   return { verified: false };
