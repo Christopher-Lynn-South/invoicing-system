@@ -47,7 +47,7 @@ export default function Layout() {
         </div>
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: '12px 0', overflowY: 'auto' }}>
+        <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
           {NAV_ITEMS.map(item => (
             <NavLink
               key={item.to}
@@ -57,14 +57,15 @@ export default function Layout() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: 10,
-                padding: '10px 16px',
+                padding: '9px 12px',
+                margin: '2px 0',
+                borderRadius: 8,
                 color: isActive ? 'var(--accent)' : 'var(--text-secondary)',
                 background: isActive ? 'var(--accent-light)' : 'transparent',
-                borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent',
                 fontSize: 14,
-                fontWeight: isActive ? 600 : 400,
+                fontWeight: isActive ? 600 : 500,
                 whiteSpace: 'nowrap',
-                transition: 'background 0.15s',
+                transition: 'background 0.15s, color 0.15s',
               })}
             >
               <span style={{ fontSize: 16, flexShrink: 0 }}>{item.icon}</span>

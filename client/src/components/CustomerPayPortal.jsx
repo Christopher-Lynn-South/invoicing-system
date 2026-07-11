@@ -158,7 +158,8 @@ function CardPayForm({ invoiceId, installmentsAllowed, onSuccess }) {
           }}>
             <CardElement options={{
               style: {
-                base: { color: '#e8eaf6', fontFamily: 'DM Sans, sans-serif', fontSize: '16px', '::placeholder': { color: '#5a6285' } },
+                base: { color: '#29271F', fontFamily: 'DM Sans, sans-serif', fontSize: '16px', '::placeholder': { color: '#8B8778' } },
+                invalid: { color: '#C2402F' },
               },
             }} />
           </div>

@@ -53,27 +53,27 @@ function htmlPage(title, body) {
   <title>${esc(title)}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:Arial,sans-serif;background:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-    .card{background:#fff;border-radius:12px;padding:36px 32px;max-width:500px;width:100%;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+    body{font-family:'Segoe UI',Arial,sans-serif;background:#FAF9F5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;color:#29271F}
+    .card{background:#fff;border:1px solid #E4E0D3;border-radius:14px;padding:36px 32px;max-width:500px;width:100%;box-shadow:0 8px 28px rgba(41,39,31,.10)}
     .center{text-align:center}
     .icon{font-size:52px;margin-bottom:14px}
-    h1{font-size:22px;color:#111827;margin-bottom:8px}
-    h2{font-size:15px;font-weight:600;color:#374151;margin:20px 0 10px}
-    p{color:#6b7280;font-size:14px;line-height:1.6;margin-bottom:8px}
-    .addr-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;font-size:14px;line-height:1.8;margin:12px 0 4px}
-    label{display:block;font-size:12px;font-weight:600;color:#6b7280;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
-    input{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;margin-bottom:12px;outline:none;transition:border .15s}
-    input:focus{border-color:#2563eb}
+    h1{font-size:22px;color:#29271F;margin-bottom:8px;font-family:Georgia,serif}
+    h2{font-size:15px;font-weight:600;color:#5D5A4E;margin:20px 0 10px}
+    p{color:#5D5A4E;font-size:14px;line-height:1.6;margin-bottom:8px}
+    .addr-box{background:#F4F2EB;border:1px solid #E4E0D3;border-radius:10px;padding:14px 16px;font-size:14px;line-height:1.8;margin:12px 0 4px}
+    label{display:block;font-size:12px;font-weight:600;color:#8B8778;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+    input{width:100%;padding:10px 12px;border:1px solid #E4E0D3;border-radius:8px;font-size:14px;margin-bottom:12px;outline:none;transition:border .15s,box-shadow .15s;background:#fff;color:#29271F}
+    input:focus{border-color:#2E7D5B;box-shadow:0 0 0 3px rgba(46,125,91,.10)}
     .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .row3{display:grid;grid-template-columns:2fr 1fr 100px;gap:10px}
-    .btn-confirm{width:100%;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
-    .btn-confirm:hover{background:#15803d}
-    .toggle{background:none;border:none;color:#2563eb;font-size:13px;cursor:pointer;padding:0;text-decoration:underline;margin-bottom:16px}
+    .btn-confirm{width:100%;background:#2E7D5B;color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:8px}
+    .btn-confirm:hover{background:#256849}
+    .toggle{background:none;border:none;color:#2E7D5B;font-size:13px;cursor:pointer;padding:0;text-decoration:underline;margin-bottom:16px}
     .edit-section{display:none;margin-top:4px}
     .edit-section.open{display:block}
-    .divider{border:none;border-top:1px solid #e5e7eb;margin:20px 0}
-    .footer{margin-top:24px;font-size:12px;color:#9ca3af;text-align:center}
-    .ship-date{background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:14px;color:#1e40af;margin-bottom:16px}
+    .divider{border:none;border-top:1px solid #E4E0D3;margin:20px 0}
+    .footer{margin-top:24px;font-size:12px;color:#8B8778;text-align:center}
+    .ship-date{background:#E8F3EC;border:1px solid #C4E0CF;border-radius:10px;padding:10px 14px;font-size:14px;color:#1E7F4F;margin-bottom:16px}
   </style>
 </head>
 <body>

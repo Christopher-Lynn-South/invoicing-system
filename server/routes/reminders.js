@@ -292,16 +292,16 @@ function reorderPage(title, body) {
   <title>${esc(title)}</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:Arial,sans-serif;background:#f3f4f6;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-    .card{background:#fff;border-radius:12px;padding:36px 32px;max-width:500px;width:100%;box-shadow:0 4px 20px rgba(0,0,0,.08)}
+    body{font-family:'Segoe UI',Arial,sans-serif;background:#FAF9F5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;color:#29271F}
+    .card{background:#fff;border:1px solid #E4E0D3;border-radius:14px;padding:36px 32px;max-width:500px;width:100%;box-shadow:0 8px 28px rgba(41,39,31,.10)}
     .center{text-align:center}
     .icon{font-size:52px;margin-bottom:14px}
-    h1{font-size:22px;color:#111827;margin-bottom:8px}
-    p{color:#6b7280;font-size:14px;line-height:1.6;margin-bottom:8px}
-    .info{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin:16px 0;font-size:14px;line-height:1.7}
-    .btn{width:100%;background:#16a34a;color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:10px;display:block;text-align:center;text-decoration:none}
-    .btn:hover{background:#15803d}
-    .footer{margin-top:24px;font-size:12px;color:#9ca3af;text-align:center}
+    h1{font-size:22px;color:#29271F;margin-bottom:8px;font-family:Georgia,serif}
+    p{color:#5D5A4E;font-size:14px;line-height:1.6;margin-bottom:8px}
+    .info{background:#F4F2EB;border:1px solid #E4E0D3;border-radius:10px;padding:14px 16px;margin:16px 0;font-size:14px;line-height:1.7}
+    .btn{width:100%;background:#2E7D5B;color:#fff;border:none;border-radius:10px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;margin-top:10px;display:block;text-align:center;text-decoration:none}
+    .btn:hover{background:#256849}
+    .footer{margin-top:24px;font-size:12px;color:#8B8778;text-align:center}
   </style>
 </head><body>
   <div class="card">${body}<div class="footer">${company}</div></div>

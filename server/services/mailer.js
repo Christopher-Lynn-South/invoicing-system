@@ -72,11 +72,11 @@ function htmlWrap(body) {
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
-  body{font-family:Arial,sans-serif;color:#111827;background:#f9fafb;margin:0;padding:0}
-  .card{max-width:600px;margin:40px auto;background:#fff;border-radius:8px;padding:32px;border:1px solid #e5e7eb}
-  h2{color:#1a56db;margin-top:0}
-  .btn{display:inline-block;background:#1a56db;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-weight:bold;margin-top:16px}
-  .footer{margin-top:32px;font-size:12px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:16px}
+  body{font-family:'Segoe UI',Arial,sans-serif;color:#29271F;background:#FAF9F5;margin:0;padding:0}
+  .card{max-width:600px;margin:40px auto;background:#fff;border-radius:12px;padding:32px;border:1px solid #E4E0D3}
+  h2{color:#2E7D5B;margin-top:0;font-family:Georgia,serif}
+  .btn{display:inline-block;background:#2E7D5B;color:#fff;text-decoration:none;padding:12px 26px;border-radius:8px;font-weight:bold;margin-top:16px}
+  .footer{margin-top:32px;font-size:12px;color:#8B8778;border-top:1px solid #E4E0D3;padding-top:16px}
 </style></head>
 <body><div class="card">${body}</div></body>
 </html>`;
@@ -240,7 +240,7 @@ async function sendRefillRequestEmail(patient, product, request) {
       </table>
       <p>Is this address correct and would you like us to proceed?</p>
       <div style="margin:24px 0;display:flex;gap:12px">
-        <a href="${confirmUrl}" style="display:inline-block;background:#16a34a;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:bold;font-size:16px;margin-right:12px">
+        <a href="${confirmUrl}" style="display:inline-block;background:#2E7D5B;color:#fff;text-decoration:none;padding:14px 28px;border-radius:8px;font-weight:bold;font-size:16px;margin-right:12px">
           ✓ Yes, Ship My Refill
         </a>
         <a href="${declineUrl}" style="display:inline-block;background:#e5e7eb;color:#374151;text-decoration:none;padding:14px 24px;border-radius:6px;font-weight:bold;font-size:16px">

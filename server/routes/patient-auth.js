@@ -138,7 +138,7 @@ router.post('/forgot-password', async (req, res) => {
             : 'Click the button below to reset your portal password. This link expires in 2 hours.'
           }</p>
           <p style="margin:24px 0">
-            <a href="${link}" style="background:#2563eb;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
+            <a href="${link}" style="background:#2E7D5B;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px">
               ${isNew ? 'Set Password' : 'Reset Password'}
             </a>
           </p>
@@ -211,7 +211,7 @@ router.post('/grant-access/:patientId', requireLogin, async (req, res) => {
       html: `
         <p>Hello ${patient.name},</p>
         <p>Your customer portal has been enabled. Click the button below to set your password and access your orders, invoices, and payments.</p>
-        <p><a href="${setupUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;">Set Up My Account</a></p>
+        <p><a href="${setupUrl}" style="display:inline-block;background:#2E7D5B;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;">Set Up My Account</a></p>
         <p>This link expires in 72 hours. If you didn't request this, you can ignore this email.</p>
       `,
     });
